@@ -1,4 +1,5 @@
 """
+execfile('/Users/pieper/slicer4/latest/SlicerCL/Experiments/slicercl.py')
 execfile('/Users/pieper/Dropbox/hacks/slicercl.py')
 execfile('/root/Dropbox/hacks/slicercl.py')
 execfile('/home/ubuntu/Dropbox/hacks/slicercl.py')
@@ -281,10 +282,10 @@ def iterate(iterations=10):
   print("Running!")
   for iteration in xrange(iterations):
     print('---------------before----------')
-    print("labelNext_dev mean ", labelNext_dev.get().mean())
-    print("candidates_dev mean ", candidates_dev.get().mean())
-    print("thetaNext_dev mean ", thetaNext_dev.get().mean())
-    print("candidatesNext_dev mean ", candidatesNext_dev.get().mean())
+    #print("labelNext_dev mean ", labelNext_dev.get().mean())
+    #print("candidates_dev mean ", candidates_dev.get().mean())
+    #print("thetaNext_dev mean ", thetaNext_dev.get().mean())
+    #print("candidatesNext_dev mean ", candidatesNext_dev.get().mean())
     prg.growCut(queue, volume.shape, None, 
         volume_dev.data, label_dev.data, theta_dev.data, 
         thetaNext_dev.data, labelNext_dev.data, 
@@ -294,15 +295,14 @@ def iterate(iterations=10):
     prg.copyShort(queue, volume.shape, None, candidatesNext_dev.data, candidates_dev.data).wait()
     prg.clearShort(queue, volume.shape, None, candidatesNext_dev.data).wait()
     prg.copyFloat(queue, theta.shape, None, thetaNext_dev.data, theta_dev.data).wait()
-    print('---------------after----------')
-    print("labelNext_dev mean ", labelNext_dev.get().mean())
-    print("candidates_dev mean ", candidates_dev.get().mean())
-    print("thetaNext_dev mean ", thetaNext_dev.get().mean())
-    print("candidatesNext_dev mean ", candidatesNext_dev.get().mean())
+    #print('---------------after----------')
+    #print("labelNext_dev mean ", labelNext_dev.get().mean())
+    #print("candidates_dev mean ", candidates_dev.get().mean())
+    #print("thetaNext_dev mean ", thetaNext_dev.get().mean())
+    #print("candidatesNext_dev mean ", candidatesNext_dev.get().mean())
 
   print("Getting data...")
   labelVolume[:] = labelNext_dev.get()
-  #labelVolume[:] = candidates_dev.get()
   print("Rendering...")
   labelNode.GetImageData().Modified()
   node.GetImageData().Modified()
@@ -322,7 +322,7 @@ def growCut(iterations=10):
   print("Candidates Ready")
 
   for iteration in xrange(iterations):
-    iterate(1)
+    iterate(10)
     slicer.app.processEvents()
     print("iteration %d" % iteration)
   print("growCut done")
