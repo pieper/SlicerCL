@@ -1,0 +1,6 @@
+This is a repository of 3D Slicer extension code written using OpenCL
+through pyopencl.
+
+http://www.slicer.org
+http://www.khronos.org/opencl
+http://mathema.tician.de/software/pyopencl
