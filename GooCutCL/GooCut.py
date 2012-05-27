@@ -36,6 +36,10 @@ class GooCutOptions(EditorLib.LabelEffectOptions):
   def create(self):
     super(GooCutOptions,self).create()
 
+    self.botButton = qt.QPushButton(self.frame)
+    self.botButton.text = "Start Bot"
+    self.frame.layout().addWidget(self.botButton)
+
     self.toleranceFrame = qt.QFrame(self.frame)
     self.toleranceFrame.setLayout(qt.QHBoxLayout())
     self.frame.layout().addWidget(self.toleranceFrame)
@@ -70,11 +74,28 @@ class GooCutOptions(EditorLib.LabelEffectOptions):
 
     HelpButton(self.frame, "Use this tool to label all voxels that are within a tolerance of where you click")
 
+    self.botButton.connect('clicked()', self.onStartBot)
     self.toleranceSpinBox.connect('valueChanged(double)', self.onToleranceSpinBoxChanged)
     self.maxPixelsSpinBox.connect('valueChanged(double)', self.onMaxPixelsSpinBoxChanged)
 
     # Add vertical spacer
     self.frame.layout().addStretch(1)
+
+    # TODO: the functionality for the steered volume should migrate to
+    # the edit helper class when functionality is finalized.
+    backgroundVolume = self.editUtil.getBackgroundVolume()
+    labelVolume = self.editUtil.getLabelVolume()
+    steeredName = backgroundVolume.GetName() + '-steered'
+    steeredVolume = slicer.util.getNode(steeredName)
+    if not steeredVolume:
+      volumesLogic = slicer.modules.volumes.logic()
+      steeredVolume = volumesLogic.CloneVolume(
+                           slicer.mrmlScene, labelVolume, steeredName)
+    compositeNodes = slicer.util.getNodes('vtkMRMLSliceCompositeNode*')
+    for compositeNode in compositeNodes.values():
+      compositeNode.SetForegroundVolumeID(steeredVolume.GetID())
+      compositeNode.SetForegroundOpacity(0.5)
+
 
   def destroy(self):
     super(GooCutOptions,self).destroy()
@@ -141,6 +162,57 @@ class GooCutOptions(EditorLib.LabelEffectOptions):
     self.parameterNode.SetDisableModifiedEvent(disableState)
     if not disableState:
       self.parameterNode.InvokePendingModifiedEvent()
+
+  def onStartBot(self):
+    """create the bot for background editing"""
+    GooCutBot(self) 
+
+
+#
+# GooCutBot
+#
+ 
+# TODO: move the concept of a Bot into the Effect class
+# to manage timer.  Also put Bot status indicator into
+# an Editor interface.  Use slicer.modules.editorBot
+# to enforce singleton instance for now.
+#class GooCutBot(EditorLib.LabelEffectBot):
+class GooCutBot(object):
+  """
+  Task to run in the background for this effect.
+  Receives a reference to the currently active options
+  so it can access tools if needed.
+  """
+  def __init__(self,options):
+    self.sliceWidget = options.tools[0].sliceWidget
+    if hasattr(slicer.modules, 'editorBot'):
+      slicer.modules.editorBot.active = False
+      del(slicer.modules.editorBot)
+    slicer.modules.editorBot = self
+    self.interval = 100
+    self.active = False
+    self.start()
+
+  def start(self):
+    self.active = True
+    qt.QTimer.singleShot(self.interval, self.iteration)
+
+  def stop(self):
+    self.active = False
+
+  def iteration(self):
+    """Perform an iteration of the GooCut algorithm"""
+    if not self.active:
+      return
+
+    import random
+    sliceLogic = self.sliceWidget.sliceLogic()
+    x = random.randint(0, self.sliceWidget.width-1)
+    y = random.randint(0, self.sliceWidget.height-1)
+    logic = GooCutLogic(sliceLogic)
+    logic.apply((x,y))
+    qt.QTimer.singleShot(self.interval, self.iteration)
+    
 
 
 #
@@ -229,7 +301,7 @@ class GooCutLogic(EditorLib.LabelEffectLogic):
     ijk = []
     for element in ijkFloat:
       try:
-        intElement = int(round(element))
+        intElement = int(element)
       except ValueError:
         intElement = 0
       ijk.append(intElement)
@@ -277,22 +349,8 @@ class GooCutLogic(EditorLib.LabelEffectLogic):
         toVisit.append((location[0]    , location[1]    , location[2] - 1))
         toVisit.append((location[0]    , location[1]    , location[2] + 1))
 
-
-
-
-    # TODO: workaround for new pipeline in slicer4
-    # - editing image data of the calling modified on the node
-    #   does not pull the pipeline chain
-    # - so we trick it by changing the image data first
-    workaround = 1
-    if workaround:
-      if not hasattr(self,"tempImageData"):
-        self.tempImageData = vtk.vtkImageData()
-      imageData = labelNode.GetImageData()
-      labelNode.SetAndObserveImageData(self.tempImageData)
-      labelNode.SetAndObserveImageData(imageData)
-    else:
-      labelNode.Modified()
+    labelImage.Modified()
+    labelNode.Modified()
 
 #
 # The GooCutExtension class definition 
