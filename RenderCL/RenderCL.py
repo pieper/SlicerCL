@@ -79,7 +79,7 @@ class RenderCLWidget:
     try:
       import pyopencl
     except ImportError:
-      qt.QMessageBox.warning(slicer.util.mainWindow(), "RenderCL", "No OpenCL for you!\nInstall pyopencl in slicer's python installation.")
+      qt.QMessageBox.warning(slicer.util.mainWindow(), "RenderCL", "No OpenCL for you!\nInstall pyopencl in slicer's python installation.\nAnd, you'll also need to be sure you have OpenCL compatible hardware and software.")
 
   def onReload(self):
     import imp, sys, os

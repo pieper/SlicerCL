@@ -1,6 +1,15 @@
 This is a repository of 3D Slicer extension code written using OpenCL
 through pyopencl.
 
+These modules are very much a work in progress, and are only
+compatible with the current development head of slicer and 
+will only work with OpenCL compatible hardware and appropriate
+drivers.
+
+Note: because it relies on low level access to hardware devices,
+on some systems improperly behaving OpenCL code can lead to 
+corrupted graphics displays or system crashes.
+
 http://www.slicer.org
 http://www.khronos.org/opencl
 http://mathema.tician.de/software/pyopencl
