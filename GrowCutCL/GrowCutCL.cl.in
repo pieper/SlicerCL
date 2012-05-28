@@ -13,9 +13,9 @@
 __kernel void clearShort(
                 __global short destination[SLICES][ROWS][COLUMNS] )
 {
-  size_t slice = get_global_id(2);
-  size_t column = get_global_id(1);
-  size_t row = get_global_id(0);
+  size_t column = get_global_id(2);
+  size_t row = get_global_id(1);
+  size_t slice = get_global_id(0);
 
   if (slice < SLICES && row < ROWS && column < COLUMNS)
   {
@@ -27,9 +27,9 @@ __kernel void copyShort(
                 __global short source[SLICES][ROWS][COLUMNS],
                 __global short destination[SLICES][ROWS][COLUMNS] )
 {
-  size_t slice = get_global_id(2);
-  size_t column = get_global_id(1);
-  size_t row = get_global_id(0);
+  size_t column = get_global_id(2);
+  size_t row = get_global_id(1);
+  size_t slice = get_global_id(0);
 
   if (slice < SLICES && row < ROWS && column < COLUMNS)
   {
@@ -41,9 +41,9 @@ __kernel void copyFloat(
                 __global float source[SLICES][ROWS][COLUMNS],
                 __global float destination[SLICES][ROWS][COLUMNS] )
 {
-  size_t slice = get_global_id(2);
-  size_t column = get_global_id(1);
-  size_t row = get_global_id(0);
+  size_t column = get_global_id(2);
+  size_t row = get_global_id(1);
+  size_t slice = get_global_id(0);
 
   if (slice < SLICES && row < ROWS && column < COLUMNS)
   {
@@ -55,9 +55,9 @@ __kernel void copyDouble(
                 __global double source[SLICES][ROWS][COLUMNS],
                 __global double destination[SLICES][ROWS][COLUMNS] )
 {
-  size_t slice = get_global_id(2);
-  size_t column = get_global_id(1);
-  size_t row = get_global_id(0);
+  size_t column = get_global_id(2);
+  size_t row = get_global_id(1);
+  size_t slice = get_global_id(0);
 
   if (slice < SLICES && row < ROWS && column < COLUMNS)
   {
@@ -100,9 +100,9 @@ __kernel void initialCandidates(
                 )
 {
 
-  size_t slice = get_global_id(2);
-  size_t column = get_global_id(1);
-  size_t row = get_global_id(0);
+  size_t column = get_global_id(2);
+  size_t row = get_global_id(1);
+  size_t slice = get_global_id(0);
 
   if (slice >= SLICES || row >= ROWS || column >= COLUMNS)
   {
@@ -125,9 +125,9 @@ __kernel void growCut(
                 __global short candidatesNext[SLICES][ROWS][COLUMNS],
                 short volumeMax )
 {
-  size_t slice = get_global_id(2);
-  size_t column = get_global_id(1);
-  size_t row = get_global_id(0);
+  size_t column = get_global_id(2);
+  size_t row = get_global_id(1);
+  size_t slice = get_global_id(0);
 
   if (slice >= SLICES || row >= ROWS || column >= COLUMNS)
   {
@@ -192,5 +192,4 @@ __kernel void growCut(
 
 
 // vim: filetype=C
-// vim: syntax
 // vim: foldmethod=marker
