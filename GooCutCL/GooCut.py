@@ -30,6 +30,8 @@ class GooCutOptions(EditorLib.LabelEffectOptions):
     self.attributes = ('MouseTool')
     self.displayName = 'GooCut Effect'
 
+    self.bot = None
+
   def __del__(self):
     super(GooCutOptions,self).__del__()
 
@@ -165,8 +167,14 @@ class GooCutOptions(EditorLib.LabelEffectOptions):
 
   def onStartBot(self):
     """create the bot for background editing"""
-    GooCutBot(self) 
-
+    if not self.bot:
+      self.bot = GooCutBot(self) 
+    if self.botButton.text == "Start Bot":
+      self.bot.start()
+      self.botButton.text = "Stop Bot"
+    else:
+      self.bot.stop()
+      self.botButton.text = "Start Bot"
 
 #
 # GooCutBot
@@ -191,7 +199,6 @@ class GooCutBot(object):
     slicer.modules.editorBot = self
     self.interval = 100
     self.active = False
-    self.start()
 
   def start(self):
     self.active = True
@@ -320,8 +327,13 @@ class GooCutLogic(EditorLib.LabelEffectLogic):
     labelArray = vtk.util.numpy_support.vtk_to_numpy(labelImage.GetPointData().GetScalars()).reshape(shape)
 
     #
-    # do a re
-    value = backgroundArray[ijk]
+    # do a region growing
+    #
+    try:
+      value = backgroundArray[ijk]
+    except IndexError:
+      # outside of volume
+      return
     label = EditUtil.EditUtil().getLabel()
     lo = value - tolerance
     hi = value + tolerance
