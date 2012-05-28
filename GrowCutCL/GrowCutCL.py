@@ -50,6 +50,10 @@ class GrowCutCLOptions(EditorLib.LabelEffectOptions):
       self.botButton.text = "Start Bot"
     self.frame.layout().addWidget(self.botButton)
 
+    self.acceptButton = qt.QPushButton(self.frame)
+    self.acceptButton.text = "Accept Steered Label"
+    self.frame.layout().addWidget(self.acceptButton)
+
     self.toleranceFrame = qt.QFrame(self.frame)
     self.toleranceFrame.setLayout(qt.QHBoxLayout())
     self.frame.layout().addWidget(self.toleranceFrame)
@@ -85,6 +89,7 @@ class GrowCutCLOptions(EditorLib.LabelEffectOptions):
     HelpButton(self.frame, "Use this tool to label all voxels that are within a tolerance of where you click")
 
     self.botButton.connect('clicked()', self.onStartBot)
+    self.acceptButton.connect('clicked()', self.onAccept)
     self.toleranceSpinBox.connect('valueChanged(double)', self.onToleranceSpinBoxChanged)
     self.maxPixelsSpinBox.connect('valueChanged(double)', self.onMaxPixelsSpinBoxChanged)
 
@@ -183,6 +188,21 @@ class GrowCutCLOptions(EditorLib.LabelEffectOptions):
       GrowCutCLBot(self) 
       self.botButton.text = "Stop Bot"
 
+  def onAccept(self):
+    """Copy steered volume into label layer"""
+    if hasattr(slicer.modules, 'editorBot'):
+      slicer.modules.editorBot.stop()
+      del(slicer.modules.editorBot)
+      self.botButton.text = "Start Bot"
+    backgroundVolume = self.editUtil.getBackgroundVolume()
+    labelVolume = self.editUtil.getLabelVolume()
+    steeredName = backgroundVolume.GetName() + '-steered'
+    labelArray = slicer.util.array(labelVolume.GetName())
+    steeredArray = slicer.util.array(steeredName)
+    labelArray[:] = steeredArray[:]
+    labelVolume.GetImageData().Modified()
+    labelVolume.Modified()
+
 #
 # GrowCutCLBot
 #
@@ -200,6 +220,7 @@ class GrowCutCLBot(object):
   so it can access tools if needed.
   """
   def __init__(self,options):
+    self.editUtil = EditUtil.EditUtil()
     self.sliceWidget = options.tools[0].sliceWidget
     if hasattr(slicer.modules, 'editorBot'):
       slicer.modules.editorBot.active = False
@@ -211,6 +232,7 @@ class GrowCutCLBot(object):
 
   def start(self):
     self.active = True
+    self.labelMTimeAtStart = self.editUtil.getLabelVolume().GetImageData().GetMTime()
     sliceLogic = self.sliceWidget.sliceLogic()
     self.logic = GrowCutCLLogic(sliceLogic)
     qt.QTimer.singleShot(self.interval, self.iteration)
@@ -222,6 +244,11 @@ class GrowCutCLBot(object):
     """Perform an iteration of the GrowCutCL algorithm"""
     if not self.active:
       return
+    labelMTime = self.editUtil.getLabelVolume().GetImageData().GetMTime()
+    if labelMTime > self.labelMTimeAtStart:
+      sliceLogic = self.sliceWidget.sliceLogic()
+      self.logic = GrowCutCLLogic(sliceLogic)
+      self.labelMTimeAtStart = labelMTime
     self.logic.step(1)
     qt.QTimer.singleShot(self.interval, self.iteration)
     
@@ -282,13 +309,13 @@ class GrowCutCLLogic(EditorLib.LabelEffectLogic):
     self.labelNode = labelLogic.GetVolumeNode()
     self.labelNode.SetModifiedSinceRead(1)
     backgroundLogic = self.sliceLogic.GetBackgroundLayer()
-    backgroundNode = backgroundLogic.GetVolumeNode()
+    self.backgroundNode = backgroundLogic.GetVolumeNode()
 
     #
-    # Get the numpy array for the bg and label
+    # Get the numpy array for the bg, steered and label
     #
     import vtk.util.numpy_support
-    self.backgroundImage = backgroundNode.GetImageData()
+    self.backgroundImage = self.backgroundNode.GetImageData()
     self.labelImage = self.labelNode.GetImageData()
     self.shape = list(self.backgroundImage.GetDimensions())
     self.shape.reverse()
@@ -297,6 +324,9 @@ class GrowCutCLLogic(EditorLib.LabelEffectLogic):
     self.labelArray = vtk.util.numpy_support.vtk_to_numpy(
         self.labelImage.GetPointData().GetScalars()).reshape(self.shape)
     self.backgroundArrayMax = self.backgroundArray.max()
+    steeredName = self.backgroundNode.GetName() + '-steered'
+    self.steeredNode = slicer.util.getNode(steeredName)
+    self.steeredArray = slicer.util.array(steeredName)
 
     print("Creating Context...")
     self.clContext = None
@@ -398,9 +428,9 @@ class GrowCutCLLogic(EditorLib.LabelEffectLogic):
     #
     # put data back in node
     #
-    self.labelArray[:] = self.labelNext_dev.get()
-    self.labelImage.Modified()
-    self.labelNode.Modified()
+    self.steeredArray[:] = self.labelNext_dev.get()
+    self.steeredNode.GetImageData().Modified()
+    self.steeredNode.Modified()
 
 
 #
