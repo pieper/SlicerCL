@@ -305,7 +305,7 @@ def iterate(iterations=10):
   labelVolume[:] = labelNext_dev.get()
   print("Rendering...")
   labelNode.GetImageData().Modified()
-  node.GetImageData().Modified()
+  labelNode.Modified()
 
   print("Done!")
 
@@ -322,7 +322,7 @@ def growCut(iterations=10):
   print("Candidates Ready")
 
   for iteration in xrange(iterations):
-    iterate(10)
+    iterate(1)
     slicer.app.processEvents()
     print("iteration %d" % iteration)
   print("growCut done")
