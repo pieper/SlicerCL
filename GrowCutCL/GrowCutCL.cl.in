@@ -1,0 +1,196 @@
+
+//
+// The .in version of this file contains symbols of the 
+// form <percent><openparen><symbol><closepren><type>) where <symbole> is the name 
+// of a symbol to be replaced and the data type is specified by printf conventions
+//
+
+
+#define SLICES %(slices)d
+#define ROWS %(rows)d
+#define COLUMNS %(columns)d
+
+__kernel void clearShort(
+                __global short destination[SLICES][ROWS][COLUMNS] )
+{
+  size_t slice = get_global_id(2);
+  size_t column = get_global_id(1);
+  size_t row = get_global_id(0);
+
+  if (slice < SLICES && row < ROWS && column < COLUMNS)
+  {
+    destination[slice][row][column] = 0;
+  }
+}
+
+__kernel void copyShort(
+                __global short source[SLICES][ROWS][COLUMNS],
+                __global short destination[SLICES][ROWS][COLUMNS] )
+{
+  size_t slice = get_global_id(2);
+  size_t column = get_global_id(1);
+  size_t row = get_global_id(0);
+
+  if (slice < SLICES && row < ROWS && column < COLUMNS)
+  {
+    destination[slice][row][column] = source[slice][row][column];
+  }
+}
+
+__kernel void copyFloat(
+                __global float source[SLICES][ROWS][COLUMNS],
+                __global float destination[SLICES][ROWS][COLUMNS] )
+{
+  size_t slice = get_global_id(2);
+  size_t column = get_global_id(1);
+  size_t row = get_global_id(0);
+
+  if (slice < SLICES && row < ROWS && column < COLUMNS)
+  {
+    destination[slice][row][column] = source[slice][row][column];
+  }
+}
+
+__kernel void copyDouble(
+                __global double source[SLICES][ROWS][COLUMNS],
+                __global double destination[SLICES][ROWS][COLUMNS] )
+{
+  size_t slice = get_global_id(2);
+  size_t column = get_global_id(1);
+  size_t row = get_global_id(0);
+
+  if (slice < SLICES && row < ROWS && column < COLUMNS)
+  {
+    destination[slice][row][column] = source[slice][row][column];
+  }
+}
+
+static inline void setNeighbors(
+        __global short volume[SLICES][ROWS][COLUMNS],
+        size_t slice, size_t row, size_t column, 
+        short value )
+{
+  int size = 1;
+  int sliceOff, rowOff, columnOff;
+  unsigned int sampleSlice, sampleRow, sampleColumn;
+  for (sliceOff = -size; sliceOff <= size; sliceOff++)
+  {
+    sampleSlice = slice + sliceOff;
+    if (sampleSlice < 0 || sampleSlice >= SLICES) continue;
+    for (rowOff = -size; rowOff <= size; rowOff++)
+    {
+    sampleRow = row + rowOff;
+    if (sampleRow < 0 || sampleRow >= ROWS) continue;
+    {
+      for (columnOff = -size; columnOff <= size; columnOff++)
+      {
+        sampleColumn = column + columnOff;
+        if (sampleColumn < 0 || sampleColumn >= COLUMNS) continue;
+        // set the value of the volume at the neighbor location
+        volume[sampleSlice][sampleRow][sampleColumn] = value;
+        }
+      }
+    }
+  }
+}
+
+__kernel void initialCandidates(
+                __global short labels[SLICES][ROWS][COLUMNS],
+                __global short candidates[SLICES][ROWS][COLUMNS] 
+                )
+{
+
+  size_t slice = get_global_id(2);
+  size_t column = get_global_id(1);
+  size_t row = get_global_id(0);
+
+  if (slice >= SLICES || row >= ROWS || column >= COLUMNS)
+  {
+    return;
+  }
+
+  if ( labels[slice][row][column] ) 
+  {
+    setNeighbors(candidates, slice, row, column, 1);
+  }
+}
+
+__kernel void growCut(
+                __global short volume[SLICES][ROWS][COLUMNS],
+                __global short label[SLICES][ROWS][COLUMNS],
+                __global float theta[SLICES][ROWS][COLUMNS],
+                __global float thetaNext[SLICES][ROWS][COLUMNS],
+                __global short labelNext[SLICES][ROWS][COLUMNS],
+                __global short candidates[SLICES][ROWS][COLUMNS],
+                __global short candidatesNext[SLICES][ROWS][COLUMNS],
+                short volumeMax )
+{
+  size_t slice = get_global_id(2);
+  size_t column = get_global_id(1);
+  size_t row = get_global_id(0);
+
+  if (slice >= SLICES || row >= ROWS || column >= COLUMNS)
+  {
+    return;
+  }
+
+  int size = 1;
+
+  int sliceOff, rowOff, columnOff;
+  unsigned int sampleSlice, sampleRow, sampleColumn;
+
+  // copy over current to Next on the assumption that nothing will change
+  labelNext[slice][row][column] = label[slice][row][column];
+  float thetaNow = theta[slice][row][column]; 
+  thetaNext[slice][row][column] = thetaNow;
+  short sample = volume[slice][row][column]; 
+
+
+  if ( candidates[slice][row][column] == 0 )
+  {
+    return;
+  }
+
+  short otherSample, otherLabel;
+  float otherTheta, sampleDiff;
+  float attackStrength;
+
+  for (sliceOff = -size; sliceOff <= size; sliceOff++)
+  {
+    sampleSlice = slice + sliceOff;
+    if (sampleSlice < 0 || sampleSlice >= SLICES) continue;
+    for (rowOff = -size; rowOff <= size; rowOff++)
+    {
+    sampleRow = row + rowOff;
+    if (sampleRow < 0 || sampleRow >= ROWS) continue;
+      for (columnOff = -size; columnOff <= size; columnOff++)
+      {
+        sampleColumn = column + columnOff;
+        if (sampleColumn < 0 || sampleColumn >= COLUMNS) continue;
+
+        otherLabel = label[sampleSlice][sampleRow][sampleColumn];
+        if (otherLabel != 0)
+        {
+          otherSample = volume[sampleSlice][sampleRow][sampleColumn];
+          otherTheta = theta[sampleSlice][sampleRow][sampleColumn];
+          sampleDiff = sample - otherSample;
+          if (sampleDiff < 0) sampleDiff *= -1;
+          attackStrength = otherTheta * ( 1 - ( sampleDiff / volumeMax ) );
+          if (attackStrength < 0) attackStrength = -1 * attackStrength;
+          if ( attackStrength > thetaNow ) 
+          {
+            labelNext[slice][row][column] = otherLabel;
+            thetaNext[slice][row][column] = attackStrength;
+            thetaNow = attackStrength;
+            setNeighbors( candidatesNext, slice, row, column, 1 );
+          }
+        }
+      }
+    }
+  }
+}
+
+
+// vim: filetype=C
+// vim: syntax
+// vim: foldmethod=marker
