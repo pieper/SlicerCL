@@ -53,7 +53,7 @@ print("Creating Context...")
 ctx = None
 for platform in cl.get_platforms():
     for device in platform.get_devices():
-        if cl.device_type.to_string(device.type) == "GPU":
+        if cl.device_type.to_string(device.type) == "CPU":
            ctx = cl.Context([device])
            print ("using: %s" % cl.device_type.to_string(device.type))
            break;
