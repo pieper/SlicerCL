@@ -10,8 +10,7 @@
 #define ROWS %(rows)d
 #define COLUMNS %(columns)d
 
-__kernel void clearShort(
-                __global short destination[SLICES][ROWS][COLUMNS] )
+__kernel void clearShort(__global short *destination)
 {
   size_t column = get_global_id(2);
   size_t row = get_global_id(1);
@@ -19,13 +18,12 @@ __kernel void clearShort(
 
   if (slice < SLICES && row < ROWS && column < COLUMNS)
   {
-    destination[slice][row][column] = 0;
+    size_t offset = slice*ROWS*COLUMNS + row*COLUMNS + column;
+    *(destination + offset) = 0;
   }
 }
 
-__kernel void copyShort(
-                __global short source[SLICES][ROWS][COLUMNS],
-                __global short destination[SLICES][ROWS][COLUMNS] )
+__kernel void copyShort( __global short *source, __global short *destination)
 {
   size_t column = get_global_id(2);
   size_t row = get_global_id(1);
@@ -33,13 +31,12 @@ __kernel void copyShort(
 
   if (slice < SLICES && row < ROWS && column < COLUMNS)
   {
-    destination[slice][row][column] = source[slice][row][column];
+    size_t offset = slice*ROWS*COLUMNS + row*COLUMNS + column;
+    *(destination + offset) = *(source + offset);
   }
 }
 
-__kernel void copyFloat(
-                __global float source[SLICES][ROWS][COLUMNS],
-                __global float destination[SLICES][ROWS][COLUMNS] )
+__kernel void copyFloat( __global float *source, __global float *destination)
 {
   size_t column = get_global_id(2);
   size_t row = get_global_id(1);
@@ -47,26 +44,13 @@ __kernel void copyFloat(
 
   if (slice < SLICES && row < ROWS && column < COLUMNS)
   {
-    destination[slice][row][column] = source[slice][row][column];
-  }
-}
-
-__kernel void copyDouble(
-                __global double source[SLICES][ROWS][COLUMNS],
-                __global double destination[SLICES][ROWS][COLUMNS] )
-{
-  size_t column = get_global_id(2);
-  size_t row = get_global_id(1);
-  size_t slice = get_global_id(0);
-
-  if (slice < SLICES && row < ROWS && column < COLUMNS)
-  {
-    destination[slice][row][column] = source[slice][row][column];
+    size_t offset = slice*ROWS*COLUMNS + row*COLUMNS + column;
+    *(destination + offset) = *(source + offset);
   }
 }
 
 static inline void setNeighbors(
-        __global short volume[SLICES][ROWS][COLUMNS],
+        __global short *volume,
         size_t slice, size_t row, size_t column, 
         short value )
 {
@@ -87,17 +71,15 @@ static inline void setNeighbors(
         sampleColumn = column + columnOff;
         if (sampleColumn < 0 || sampleColumn >= COLUMNS) continue;
         // set the value of the volume at the neighbor location
-        volume[sampleSlice][sampleRow][sampleColumn] = value;
+        size_t offset = sampleSlice*ROWS*COLUMNS + sampleRow*COLUMNS + sampleColumn;
+        *(volume + offset) = value;
         }
       }
     }
   }
 }
 
-__kernel void initialCandidates(
-                __global short labels[SLICES][ROWS][COLUMNS],
-                __global short candidates[SLICES][ROWS][COLUMNS] 
-                )
+__kernel void initialCandidates( __global short *labels, __global short *candidates )
 {
 
   size_t column = get_global_id(2);
@@ -109,25 +91,27 @@ __kernel void initialCandidates(
     return;
   }
 
-  if ( labels[slice][row][column] ) 
+  size_t offset = slice*ROWS*COLUMNS + row*COLUMNS + column;
+  if ( *(labels + offset) ) 
   {
     setNeighbors(candidates, slice, row, column, 1);
   }
 }
 
 __kernel void growCut(
-                __global short volume[SLICES][ROWS][COLUMNS],
-                __global short label[SLICES][ROWS][COLUMNS],
-                __global float theta[SLICES][ROWS][COLUMNS],
-                __global float thetaNext[SLICES][ROWS][COLUMNS],
-                __global short labelNext[SLICES][ROWS][COLUMNS],
-                __global short candidates[SLICES][ROWS][COLUMNS],
-                __global short candidatesNext[SLICES][ROWS][COLUMNS],
+                __global short *volume,
+                __global short *label,
+                __global float *theta,
+                __global float *thetaNext,
+                __global short *labelNext,
+                __global short *candidates,
+                __global short *candidatesNext,
                 short volumeMax )
 {
   size_t column = get_global_id(2);
   size_t row = get_global_id(1);
   size_t slice = get_global_id(0);
+  size_t offset = slice*ROWS*COLUMNS + row*COLUMNS + column;
 
   if (slice >= SLICES || row >= ROWS || column >= COLUMNS)
   {
@@ -140,13 +124,13 @@ __kernel void growCut(
   unsigned int sampleSlice, sampleRow, sampleColumn;
 
   // copy over current to Next on the assumption that nothing will change
-  labelNext[slice][row][column] = label[slice][row][column];
-  float thetaNow = theta[slice][row][column]; 
-  thetaNext[slice][row][column] = thetaNow;
-  short sample = volume[slice][row][column]; 
+  *(labelNext + offset) = *(label + offset);
+  float thetaNow = *(theta + offset);
+  *(thetaNext + offset) = thetaNow;
+  short sample = *(volume + offset);
 
 
-  if ( candidates[slice][row][column] == 0 )
+  if ( *(candidates + offset) == 0 )
   {
     return;
   }
@@ -168,19 +152,21 @@ __kernel void growCut(
         sampleColumn = column + columnOff;
         if (sampleColumn < 0 || sampleColumn >= COLUMNS) continue;
 
-        otherLabel = label[sampleSlice][sampleRow][sampleColumn];
+        size_t sampleOffset = sampleSlice*ROWS*COLUMNS + 
+                                sampleRow*COLUMNS + sampleColumn;
+        otherLabel = *(label + sampleOffset);
         if (otherLabel != 0)
         {
-          otherSample = volume[sampleSlice][sampleRow][sampleColumn];
-          otherTheta = theta[sampleSlice][sampleRow][sampleColumn];
+          otherSample = *(volume + sampleOffset);
+          otherTheta = *(theta + sampleOffset);
           sampleDiff = sample - otherSample;
           if (sampleDiff < 0) sampleDiff *= -1;
           attackStrength = otherTheta * ( 1 - ( sampleDiff / volumeMax ) );
           if (attackStrength < 0) attackStrength = -1 * attackStrength;
           if ( attackStrength > thetaNow ) 
           {
-            labelNext[slice][row][column] = otherLabel;
-            thetaNext[slice][row][column] = attackStrength;
+            *(labelNext + offset) = otherLabel;
+            *(thetaNext + offset) = attackStrength;
             thetaNow = attackStrength;
             setNeighbors( candidatesNext, slice, row, column, 1 );
           }
