@@ -355,7 +355,7 @@ class GrowCutCLLogic(EditorLib.LabelEffectLogic):
     self.theta_dev = pyopencl.array.to_device(self.clQueue,theta)
     thetaNext = numpy.copy(numpy.array(theta, dtype=numpy.dtype('float32')))
     self.thetaNext_dev = pyopencl.array.to_device(self.clQueue,thetaNext)
-    self.labelNext_dev = pyopencl.array.empty_like(self.labelArray_dev)
+    self.labelNext_dev = pyopencl.array.zeros_like(self.labelArray_dev)
 
     # candidates is a bitmap of pixels to consider on the next iteration
     candidates = self.labelArray.copy()
