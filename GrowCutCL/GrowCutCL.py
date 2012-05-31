@@ -380,8 +380,22 @@ class GrowCutCLLogic(EditorLib.LabelEffectLogic):
         'columns' : columns,
         }
     self.clProgram = pyopencl.Program(self.clContext, source).build()
+    self.pendingEvent = None
 
   def step(self, iterations=1):
+
+    if self.pendingEvent:
+      if self.pendingEvent.command_execution_status == 0:
+        # TODO: is there an attribute for CL_COMPLETE?
+        # TODO: also catch error codes here
+        #
+        # put data back in node
+        #
+        self.steeredArray[:] = self.labelNext_dev.get()
+        self.steeredNode.GetImageData().Modified()
+        self.steeredNode.Modified()
+      else:
+        return
 
     #
     # get the parameters from MRML
@@ -407,30 +421,26 @@ class GrowCutCLLogic(EditorLib.LabelEffectLogic):
 
     #
     # run iterations
+    # - save the pending event from the last call so that we can 
+    #   know when the execution is finished (so the main event loop
+    #   is not blocked on this execution)
     #
-
     for iteration in xrange(iterations):
       self.clProgram.growCut(self.clQueue, self.shape, None, 
           self.backgroundArray_dev.data, self.labelArray_dev.data, 
           self.theta_dev.data, 
           self.thetaNext_dev.data, self.labelNext_dev.data, 
           self.candidates_dev.data, self.candidatesNext_dev.data,
-          self.backgroundArrayMax).wait()
+          self.backgroundArrayMax)
       self.clProgram.copyShort(self.clQueue, self.shape, None, 
-          self.labelNext_dev.data, self.labelArray_dev.data).wait()
+          self.labelNext_dev.data, self.labelArray_dev.data)
       self.clProgram.copyShort(self.clQueue, self.shape, None, 
-          self.candidatesNext_dev.data, self.candidates_dev.data).wait()
+          self.candidatesNext_dev.data, self.candidates_dev.data)
       self.clProgram.clearShort(self.clQueue, self.shape, None, 
-          self.candidatesNext_dev.data).wait()
-      self.clProgram.copyFloat(self.clQueue, self.shape, None, 
-          self.thetaNext_dev.data, self.theta_dev.data).wait()
+          self.candidatesNext_dev.data)
+      self.pendingEvent = self.clProgram.copyFloat(self.clQueue, self.shape, None, 
+          self.thetaNext_dev.data, self.theta_dev.data)
 
-    #
-    # put data back in node
-    #
-    self.steeredArray[:] = self.labelNext_dev.get()
-    self.steeredNode.GetImageData().Modified()
-    self.steeredNode.Modified()
 
 
 #
