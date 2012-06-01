@@ -384,16 +384,20 @@ class GrowCutCLLogic(EditorLib.LabelEffectLogic):
 
     # set the work size to include the extent of the labeled region
     labeledPoints = numpy.transpose(numpy.where( self.labelArray != 0 ))
-    # Get the bounding box
-    minCorner = labeledPoints.min(0)
-    maxCorner = labeledPoints.max(0)+1
+    if len(labeledPoints) == 0:
+      self.work_offset = (0,0,0)
+      self.work_size = self.shape
+    else:
+      # Get the bounding box
+      minCorner = labeledPoints.min(0)
+      maxCorner = labeledPoints.max(0)+1
 
-    origin = minCorner
-    size = maxCorner - minCorner
-    # workaround for some boost/numpy issue
-    # http://boost.2283326.n4.nabble.com/extracting-a-numpy-int32-type-td2701573.html
-    self.work_offset = (int(origin[0]),int(origin[1]),int(origin[2]))
-    self.work_size = (int(size[0]),int(size[1]),int(size[2]))
+      origin = minCorner
+      size = maxCorner - minCorner
+      # workaround for some boost/numpy issue
+      # http://boost.2283326.n4.nabble.com/extracting-a-numpy-int32-type-td2701573.html
+      self.work_offset = (int(origin[0]),int(origin[1]),int(origin[2]))
+      self.work_size = (int(size[0]),int(size[1]),int(size[2]))
 
   def step(self, iterations=1):
 
