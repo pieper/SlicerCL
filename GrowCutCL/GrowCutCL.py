@@ -382,6 +382,19 @@ class GrowCutCLLogic(EditorLib.LabelEffectLogic):
     self.clProgram = pyopencl.Program(self.clContext, source).build()
     self.pendingEvent = None
 
+    # set the work size to include the extent of the labeled region
+    labeledPoints = numpy.transpose(numpy.where( self.labelArray != 0 ))
+    # Get the bounding box
+    minCorner = labeledPoints.min(0)
+    maxCorner = labeledPoints.max(0)+1
+
+    origin = minCorner
+    size = maxCorner - minCorner
+    # workaround for some boost/numpy issue
+    # http://boost.2283326.n4.nabble.com/extracting-a-numpy-int32-type-td2701573.html
+    self.work_offset = (int(origin[0]),int(origin[1]),int(origin[2]))
+    self.work_size = (int(size[0]),int(size[1]),int(size[2]))
+
   def step(self, iterations=1):
 
     if self.pendingEvent:
@@ -426,20 +439,20 @@ class GrowCutCLLogic(EditorLib.LabelEffectLogic):
     #   is not blocked on this execution)
     #
     for iteration in xrange(iterations):
-      self.clProgram.growCut(self.clQueue, self.shape, None, 
+      self.clProgram.growCut(self.clQueue, self.work_size, None,
           self.backgroundArray_dev.data, self.labelArray_dev.data, 
           self.theta_dev.data, 
           self.thetaNext_dev.data, self.labelNext_dev.data, 
           self.candidates_dev.data, self.candidatesNext_dev.data,
-          self.backgroundArrayMax)
-      self.clProgram.copyShort(self.clQueue, self.shape, None, 
-          self.labelNext_dev.data, self.labelArray_dev.data)
-      self.clProgram.copyShort(self.clQueue, self.shape, None, 
-          self.candidatesNext_dev.data, self.candidates_dev.data)
-      self.clProgram.clearShort(self.clQueue, self.shape, None, 
-          self.candidatesNext_dev.data)
-      self.pendingEvent = self.clProgram.copyFloat(self.clQueue, self.shape, None, 
-          self.thetaNext_dev.data, self.theta_dev.data)
+          self.backgroundArrayMax, global_offset=self.work_offset)
+      self.clProgram.copyShort(self.clQueue, self.work_size, None,
+          self.labelNext_dev.data, self.labelArray_dev.data, global_offset=self.work_offset)
+      self.clProgram.copyShort(self.clQueue, self.work_size, None,
+          self.candidatesNext_dev.data, self.candidates_dev.data, global_offset=self.work_offset)
+      self.clProgram.clearShort(self.clQueue, self.work_size, None,
+          self.candidatesNext_dev.data, global_offset=self.work_offset)
+      self.pendingEvent = self.clProgram.copyFloat(self.clQueue, self.work_size, None,
+          self.thetaNext_dev.data, self.theta_dev.data, global_offset=self.work_offset)
 
 
 
