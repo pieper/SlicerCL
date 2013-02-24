@@ -35,6 +35,10 @@ class GrowCutCLOptions(EditorLib.LabelEffectOptions):
     self.attributes = ('MouseTool')
     self.displayName = 'GrowCutCL Effect'
 
+    # flags for superclass
+    self.usesPaintOver = False
+    self.usesThreshold = False
+
     self.bot = None
 
   def __del__(self):
@@ -60,44 +64,10 @@ class GrowCutCLOptions(EditorLib.LabelEffectOptions):
     self.acceptButton.text = "Accept Steered Label"
     self.frame.layout().addWidget(self.acceptButton)
 
-    self.toleranceFrame = qt.QFrame(self.frame)
-    self.toleranceFrame.setLayout(qt.QHBoxLayout())
-    self.frame.layout().addWidget(self.toleranceFrame)
-    self.widgets.append(self.toleranceFrame)
-    self.toleranceLabel = qt.QLabel("Tolerance:", self.toleranceFrame)
-    self.toleranceLabel.setToolTip("Set the tolerance of the wand in terms of background pixel values")
-    self.toleranceFrame.layout().addWidget(self.toleranceLabel)
-    self.widgets.append(self.toleranceLabel)
-    self.toleranceSpinBox = qt.QDoubleSpinBox(self.toleranceFrame)
-    self.toleranceSpinBox.setToolTip("Set the tolerance of the wand in terms of background pixel values")
-    self.toleranceSpinBox.minimum = 0
-    self.toleranceSpinBox.maximum = 1000
-    self.toleranceSpinBox.suffix = ""
-    self.toleranceFrame.layout().addWidget(self.toleranceSpinBox)
-    self.widgets.append(self.toleranceSpinBox)
-
-    self.maxPixelsFrame = qt.QFrame(self.frame)
-    self.maxPixelsFrame.setLayout(qt.QHBoxLayout())
-    self.frame.layout().addWidget(self.maxPixelsFrame)
-    self.widgets.append(self.maxPixelsFrame)
-    self.maxPixelsLabel = qt.QLabel("Max Pixels per click:", self.maxPixelsFrame)
-    self.maxPixelsLabel.setToolTip("Set the maxPixels for each click")
-    self.maxPixelsFrame.layout().addWidget(self.maxPixelsLabel)
-    self.widgets.append(self.maxPixelsLabel)
-    self.maxPixelsSpinBox = qt.QDoubleSpinBox(self.maxPixelsFrame)
-    self.maxPixelsSpinBox.setToolTip("Set the maxPixels for each click")
-    self.maxPixelsSpinBox.minimum = 1
-    self.maxPixelsSpinBox.maximum = 1000
-    self.maxPixelsSpinBox.suffix = ""
-    self.maxPixelsFrame.layout().addWidget(self.maxPixelsSpinBox)
-    self.widgets.append(self.maxPixelsSpinBox)
-
-    HelpButton(self.frame, "Use this tool to label all voxels that are within a tolerance of where you click")
+    HelpButton(self.frame, "This is an interactive segmentation tool that is actively calculating a region-growing method as you provide additional input.  Starting the Bot will cause the segmentation to grow using your current labels as input.")
 
     self.botButton.connect('clicked()', self.onStartBot)
     self.acceptButton.connect('clicked()', self.onAccept)
-    self.toleranceSpinBox.connect('valueChanged(double)', self.onToleranceSpinBoxChanged)
-    self.maxPixelsSpinBox.connect('valueChanged(double)', self.onMaxPixelsSpinBoxChanged)
 
     # Add vertical spacer
     self.frame.layout().addStretch(1)
@@ -137,8 +107,6 @@ class GrowCutCLOptions(EditorLib.LabelEffectOptions):
     disableState = self.parameterNode.GetDisableModifiedEvent()
     self.parameterNode.SetDisableModifiedEvent(1)
     defaults = (
-      ("tolerance", "20"),
-      ("maxPixels", "200"),
     )
     for d in defaults:
       param = "GrowCutCL,"+d[0]
@@ -150,16 +118,13 @@ class GrowCutCLOptions(EditorLib.LabelEffectOptions):
   def updateGUIFromMRML(self,caller,event):
     if self.updatingGUI:
       return
-    params = ("tolerance",)
-    params = ("maxPixels",)
+    params = ()
     for p in params:
       if self.parameterNode.GetParameter("GrowCutCL,"+p) == '':
         # don't update if the parameter node has not got all values yet
         return
     self.updatingGUI = True
     super(GrowCutCLOptions,self).updateGUIFromMRML(caller,event)
-    self.toleranceSpinBox.setValue( float(self.parameterNode.GetParameter("GrowCutCL,tolerance")) )
-    self.maxPixelsSpinBox.setValue( float(self.parameterNode.GetParameter("GrowCutCL,maxPixels")) )
     self.updatingGUI = False
 
   def onDeviceTypeChanged(self,index):
@@ -181,8 +146,6 @@ class GrowCutCLOptions(EditorLib.LabelEffectOptions):
     disableState = self.parameterNode.GetDisableModifiedEvent()
     self.parameterNode.SetDisableModifiedEvent(1)
     super(GrowCutCLOptions,self).updateMRMLFromGUI()
-    self.parameterNode.SetParameter( "GrowCutCL,tolerance", str(self.toleranceSpinBox.value) )
-    self.parameterNode.SetParameter( "GrowCutCL,maxPixels", str(self.maxPixelsSpinBox.value) )
     self.parameterNode.SetDisableModifiedEvent(disableState)
     if not disableState:
       self.parameterNode.InvokePendingModifiedEvent()
@@ -446,8 +409,6 @@ class GrowCutCLLogic(EditorLib.LabelEffectLogic):
     #
     # TODO: handl any real growcut parameters
     node = EditUtil.EditUtil().getParameterNode()
-    tolerance = float(node.GetParameter("GrowCutCL,tolerance"))
-    maxPixels = float(node.GetParameter("GrowCutCL,maxPixels"))
 
     #
     # initialize candidates if needed
