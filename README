@@ -2,12 +2,12 @@ This is a repository of 3D Slicer extension code written using OpenCL
 through pyopencl.
 
 These modules are very much a work in progress, and are only
-compatible with the current development head of slicer and 
+compatible with the current development head of slicer and
 will only work with OpenCL compatible hardware and appropriate
 drivers.
 
 Note: because it relies on low level access to hardware devices,
-on some systems improperly behaving OpenCL code can lead to 
+on some systems improperly behaving OpenCL code can lead to
 corrupted graphics displays or system crashes.
 
 http://www.slicer.org
@@ -17,3 +17,18 @@ http://mathema.tician.de/software/pyopencl
 A movie of this code in action:
 
 http://www.youtube.com/watch?v=dfu2gugHLHs
+
+Status:
+The code can be made to work on linux, windows, or mac with the proper
+hardware and drivers.  But you need to install the PyOpenCL package
+into slicer's python, and that can be easy or hard depending on
+the platform.
+
+Mac/Linux: edit Experiments/slicercl.sh so match your paths and then run it.
+
+Windows: get the binary versions of the packages listed in Experiments/slicercl.sh
+either by building from source or by installing the versions from the scipy
+download sites.  I have made this work in the past, but don't have binary solutions
+available so you are on your own.  Any help automating this would be
+much appreciated!
+
