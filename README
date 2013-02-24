@@ -32,3 +32,11 @@ download sites.  I have made this work in the past, but don't have binary soluti
 available so you are on your own.  Any help automating this would be
 much appreciated!
 
+Usage:
+Do a git checkout of this to a suitable directory, and then point slicer to it, something like:
+
+  ./Slicer-build/Slicer --additional-module-paths ../SlicerCL/GrowCutCL/
+
+Then you will find the new button in the editor interface.
+
+Please report any issues you find.
