@@ -13,7 +13,7 @@ import numpy
 
 #
 # The Editor Extension itself.
-# 
+#
 # This needs to define the hooks to become an editor effect.
 #
 
@@ -42,6 +42,12 @@ class GrowCutCLOptions(EditorLib.LabelEffectOptions):
 
   def create(self):
     super(GrowCutCLOptions,self).create()
+
+    self.deviceTypeComboBox = qt.QComboBox()
+    self.deviceTypeComboBox.addItem('CPU')
+    self.deviceTypeComboBox.addItem('GPU')
+    self.deviceTypeComboBox.connect('currentIndexChanged(int)', self.onDeviceTypeChanged)
+    self.frame.layout().addWidget(self.deviceTypeComboBox)
 
     self.botButton = qt.QPushButton(self.frame)
     if hasattr(slicer.modules, 'editorBot'):
@@ -117,7 +123,7 @@ class GrowCutCLOptions(EditorLib.LabelEffectOptions):
 
   # note: this method needs to be implemented exactly as-is
   # in each leaf subclass so that "self" in the observer
-  # is of the correct type 
+  # is of the correct type
   def updateParameterNode(self, caller, event):
     node = EditUtil.EditUtil().getParameterNode()
     if node != self.parameterNode:
@@ -156,6 +162,9 @@ class GrowCutCLOptions(EditorLib.LabelEffectOptions):
     self.maxPixelsSpinBox.setValue( float(self.parameterNode.GetParameter("GrowCutCL,maxPixels")) )
     self.updatingGUI = False
 
+  def onDeviceTypeChanged(self,index):
+    self.restartBotIfRunning()
+
   def onToleranceSpinBoxChanged(self,value):
     if self.updatingGUI:
       return
@@ -178,15 +187,29 @@ class GrowCutCLOptions(EditorLib.LabelEffectOptions):
     if not disableState:
       self.parameterNode.InvokePendingModifiedEvent()
 
-  def onStartBot(self):
-    """create the bot for background editing"""
+  def stopBot(self):
     if hasattr(slicer.modules, 'editorBot'):
       slicer.modules.editorBot.stop()
       del(slicer.modules.editorBot)
-      self.botButton.text = "Start Bot"
-    else:
-      GrowCutCLBot(self) 
+    self.botButton.text = "Start Bot"
+
+  def startBot(self):
+      preferredDeviceType = self.deviceTypeComboBox.currentText
+      print(preferredDeviceType)
+      GrowCutCLBot(self, preferredDeviceType=preferredDeviceType)
       self.botButton.text = "Stop Bot"
+
+  def restartBotIfRunning(self):
+    if hasattr(slicer.modules, 'editorBot'):
+      self.stopBot()
+      self.startBot()
+
+  def onStartBot(self):
+    """create the bot for background editing"""
+    if hasattr(slicer.modules, 'editorBot'):
+      self.stopBot()
+    else:
+      self.startBot()
 
   def onAccept(self):
     """Copy steered volume into label layer"""
@@ -206,7 +229,7 @@ class GrowCutCLOptions(EditorLib.LabelEffectOptions):
 #
 # GrowCutCLBot
 #
- 
+
 # TODO: move the concept of a Bot into the Effect class
 # to manage timer.  Also put Bot status indicator and controls into
 # an Editor interface.  For now, use slicer.modules.editorBot
@@ -219,7 +242,8 @@ class GrowCutCLBot(object):
   Receives a reference to the currently active options
   so it can access tools if needed.
   """
-  def __init__(self,options):
+  def __init__(self,options,preferredDeviceType='GPU'):
+    self.preferredDeviceType = preferredDeviceType
     self.editUtil = EditUtil.EditUtil()
     self.sliceWidget = options.tools[0].sliceWidget
     if hasattr(slicer.modules, 'editorBot'):
@@ -234,7 +258,7 @@ class GrowCutCLBot(object):
     self.active = True
     self.labelMTimeAtStart = self.editUtil.getLabelVolume().GetImageData().GetMTime()
     sliceLogic = self.sliceWidget.sliceLogic()
-    self.logic = GrowCutCLLogic(sliceLogic)
+    self.logic = GrowCutCLLogic(sliceLogic,self.preferredDeviceType)
     qt.QTimer.singleShot(self.interval, self.iteration)
 
   def stop(self):
@@ -251,13 +275,12 @@ class GrowCutCLBot(object):
       self.labelMTimeAtStart = labelMTime
     self.logic.step(1)
     qt.QTimer.singleShot(self.interval, self.iteration)
-    
 
 
 #
 # GrowCutCLTool
 #
- 
+
 class GrowCutCLTool(EditorLib.LabelEffectTool):
   """
   One instance of this will be created per-view when the effect
@@ -269,7 +292,12 @@ class GrowCutCLTool(EditorLib.LabelEffectTool):
   """
 
   def __init__(self, sliceWidget, threeDWidget=None):
-    super(GrowCutCLTool,self).__init__(sliceWidget, threeDWidget)
+    try:
+      # for the threeDEditor branch
+      super(GrowCutCLTool,self).__init__(sliceWidget, threeDWidget)
+    except TypeError:
+      # for the master branch as of February 2013
+      super(GrowCutCLTool,self).__init__(sliceWidget)
 
   def cleanup(self):
     super(GrowCutCLTool,self).cleanup()
@@ -284,19 +312,19 @@ class GrowCutCLTool(EditorLib.LabelEffectTool):
 #
 # GrowCutCLLogic
 #
- 
+
 class GrowCutCLLogic(EditorLib.LabelEffectLogic):
   """
   This class contains helper methods for a given effect
   type.  It can be instanced as needed by an GrowCutCLTool
   or GrowCutCLOptions instance in order to compute intermediate
-  results (say, for user feedback) or to implement the final 
+  results (say, for user feedback) or to implement the final
   segmentation editing operation.  This class is split
   from the GrowCutCLTool so that the operations can be used
   by other code without the need for a view context.
   """
 
-  def __init__(self,sliceLogic):
+  def __init__(self,sliceLogic,preferredDeviceType='GPU'):
     self.sliceLogic = sliceLogic
 
     import os
@@ -307,7 +335,6 @@ class GrowCutCLLogic(EditorLib.LabelEffectLogic):
     #
     labelLogic = self.sliceLogic.GetLabelLayer()
     self.labelNode = labelLogic.GetVolumeNode()
-    self.labelNode.SetModifiedSinceRead(1)
     backgroundLogic = self.sliceLogic.GetBackgroundLayer()
     self.backgroundNode = backgroundLogic.GetVolumeNode()
 
@@ -332,7 +359,7 @@ class GrowCutCLLogic(EditorLib.LabelEffectLogic):
     self.clContext = None
     for platform in pyopencl.get_platforms():
         for device in platform.get_devices():
-            if pyopencl.device_type.to_string(device.type) == "CPU":
+            if pyopencl.device_type.to_string(device.type) == preferredDeviceType:
                self.clContext = pyopencl.Context([device])
                print ("using: %s" % pyopencl.device_type.to_string(device.type))
                break;
@@ -374,9 +401,9 @@ class GrowCutCLLogic(EditorLib.LabelEffectLogic):
     fp.close()
 
     slices, rows, columns = self.shape
-    source = sourceIn % { 
-        'slices' : slices, 
-        'rows' : rows, 
+    source = sourceIn % {
+        'slices' : slices,
+        'rows' : rows,
         'columns' : columns,
         }
     self.clProgram = pyopencl.Program(self.clContext, source).build()
@@ -430,7 +457,7 @@ class GrowCutCLLogic(EditorLib.LabelEffectLogic):
           self.clQueue, self.shape, None, self.candidatesNext_dev.data).wait()
       print("self.candidatesNext_dev mean ", self.candidatesNext_dev.get().mean())
       self.clProgram.initialCandidates(
-          self.clQueue, self.shape, None, self.labelArray_dev.data, 
+          self.clQueue, self.shape, None, self.labelArray_dev.data,
           self.candidates_dev.data).wait()
       print("self.labelArray_dev mean ", self.labelArray_dev.get().mean())
       print("self.candidates_dev mean ", self.candidates_dev.get().mean())
@@ -438,15 +465,15 @@ class GrowCutCLLogic(EditorLib.LabelEffectLogic):
 
     #
     # run iterations
-    # - save the pending event from the last call so that we can 
+    # - save the pending event from the last call so that we can
     #   know when the execution is finished (so the main event loop
     #   is not blocked on this execution)
     #
     for iteration in xrange(iterations):
       self.clProgram.growCut(self.clQueue, self.work_size, None,
-          self.backgroundArray_dev.data, self.labelArray_dev.data, 
-          self.theta_dev.data, 
-          self.thetaNext_dev.data, self.labelNext_dev.data, 
+          self.backgroundArray_dev.data, self.labelArray_dev.data,
+          self.theta_dev.data,
+          self.thetaNext_dev.data, self.labelNext_dev.data,
           self.candidates_dev.data, self.candidatesNext_dev.data,
           self.backgroundArrayMax, global_offset=self.work_offset)
       self.clProgram.copyShort(self.clQueue, self.work_size, None,
@@ -461,7 +488,7 @@ class GrowCutCLLogic(EditorLib.LabelEffectLogic):
 
 
 #
-# The GrowCutCLExtension class definition 
+# The GrowCutCLExtension class definition
 #
 
 class GrowCutCLExtension(object):
@@ -493,11 +520,11 @@ class GrowCutCL:
     parent.categories = ["Developer Tools.Editor Extensions"]
     parent.contributors = ["Steve Pieper"]
     parent.helpText = """
-    An OpenCL implementation of GrowCut as an EditorEffect with a Bot to 
+    An OpenCL implementation of GrowCut as an EditorEffect with a Bot to
     provide automated segmentation.
     """
     parent.acknowledgementText = """
-    This editor extension was developed by 
+    This editor extension was developed by
     Steve Pieper, Isomics, Inc.
     """
 
@@ -520,14 +547,14 @@ class GrowCutCL:
 class GrowCutCLWidget:
   def __init__(self, parent = None):
     self.parent = parent
-    
+
   def setup(self):
     # don't display anything for this widget - it will be hidden anyway
     pass
 
   def enter(self):
     pass
-    
+
   def exit(self):
     pass
 
