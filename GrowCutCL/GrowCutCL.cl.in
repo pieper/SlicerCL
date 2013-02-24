@@ -60,16 +60,16 @@ static inline void setNeighbors(
   for (sliceOff = -size; sliceOff <= size; sliceOff++)
   {
     sampleSlice = slice + sliceOff;
-    if (sampleSlice < 0 || sampleSlice >= SLICES) continue;
+    if (sampleSlice >= SLICES) continue;
     for (rowOff = -size; rowOff <= size; rowOff++)
     {
     sampleRow = row + rowOff;
-    if (sampleRow < 0 || sampleRow >= ROWS) continue;
+    if (sampleRow >= ROWS) continue;
     {
       for (columnOff = -size; columnOff <= size; columnOff++)
       {
         sampleColumn = column + columnOff;
-        if (sampleColumn < 0 || sampleColumn >= COLUMNS) continue;
+        if (sampleColumn >= COLUMNS) continue;
         // set the value of the volume at the neighbor location
         size_t offset = sampleSlice*ROWS*COLUMNS + sampleRow*COLUMNS + sampleColumn;
         *(volume + offset) = value;
@@ -142,15 +142,15 @@ __kernel void growCut(
   for (sliceOff = -size; sliceOff <= size; sliceOff++)
   {
     sampleSlice = slice + sliceOff;
-    if (sampleSlice < 0 || sampleSlice >= SLICES) continue;
+    if (sampleSlice >= SLICES) continue;
     for (rowOff = -size; rowOff <= size; rowOff++)
     {
     sampleRow = row + rowOff;
-    if (sampleRow < 0 || sampleRow >= ROWS) continue;
+    if (sampleRow >= ROWS) continue;
       for (columnOff = -size; columnOff <= size; columnOff++)
       {
         sampleColumn = column + columnOff;
-        if (sampleColumn < 0 || sampleColumn >= COLUMNS) continue;
+        if (sampleColumn >= COLUMNS) continue;
 
         size_t sampleOffset = sampleSlice*ROWS*COLUMNS + 
                                 sampleRow*COLUMNS + sampleColumn;
