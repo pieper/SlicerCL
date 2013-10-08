@@ -234,7 +234,7 @@ class GrowCutCLBot(object):
     labelMTime = self.editUtil.getLabelVolume().GetImageData().GetMTime()
     if labelMTime > self.labelMTimeAtStart:
       sliceLogic = self.sliceWidget.sliceLogic()
-      self.logic = GrowCutCLLogic(sliceLogic)
+      self.logic = GrowCutCLLogic(sliceLogic,self.preferredDeviceType)
       self.labelMTimeAtStart = labelMTime
     self.logic.step(1)
     qt.QTimer.singleShot(self.interval, self.iteration)
