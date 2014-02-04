@@ -100,8 +100,8 @@ class RenderCLWidget:
     if not volumeNode:
       qt.QMessageBox.warning(slicer.util.mainWindow(), "RenderCL", "No volume selected")
       return
-    logic = RenderCLLogic(volumeNode)
-    logic.render()
+    self.logic = RenderCLLogic(volumeNode)
+    self.logic.render()
 
 
 class RenderCLLogic(object):
@@ -135,44 +135,117 @@ class RenderCLLogic(object):
     sourceIn = fp.read()
     fp.close()
 
-    source = sourceIn % { 
+    source = sourceIn % { # TODO: depend on image dimensions and spacing
         'rayStepSize' : '0.01f',
         'rayMaxSteps' : '500',
         }
     self.prg = pyopencl.Program(self.ctx, source).build()
 
-    # create a 3d image from the volume
-    num_channels = 1
-    self.volumeImage_dev = pyopencl.image_from_array(self.ctx, self.volumeArray, num_channels)
+    # camera info
+    invViewMatrix = numpy.eye(4,dtype=numpy.dtype('float32'))
+    self.invViewMatrix_dev = pyopencl.array.to_device(self.queue, invViewMatrix)
+
+
+    if False:
+      # create a 3d image from the volume
+      num_channels = 2
+      volumeImage = (self.volumeArray[:], self.volumeArray[:], num_channels)
+      self.volumeImage_dev = pyopencl.image_from_array(self.ctx, self.volumeArray, num_channels, mode = "r", norm_int = True)
+      origin = (0,0,0)
+      region = tuple(numpy.asarray(self.volumeArray.shape) - numpy.asarray( (1,1,1) ))
+      #pyopencl.enqueue_fill_image(self.queue, self.volumeImage_dev, 128, 0, region, wait_for=None)
+      print("max ------------------")
+      print(self.volumeArray.max())
+
+    # odd sample code that seems to work
+    num_channels = 2
+    shape = self.volumeArray.shape
+    a = numpy.random.random(shape + (num_channels,)).astype(numpy.float32)
+
+    print(a)
+    print(a.shape)
+    a[:,:,:,0] = numpy.ones_like(self.volumeArray) * 255
+    a[:,:,:,1] = self.volumeArray
+    print(a)
+    print(a.shape)
+    print(a.max())
+
+    self.volumeImage_dev = pyopencl.image_from_array(self.ctx, a, num_channels)
 
     # create a 2d array for the render buffer
-    self.renderArray = numpy.zeros(self.renderSize,dtype=numpy.dtype('uint32'))
+    self.renderArray = numpy.zeros(self.renderSize+(4,) ,dtype=numpy.dtype('ubyte'))
     self.renderArray_dev = pyopencl.array.to_device(self.queue, self.renderArray)
 
     self.volumeSampler = pyopencl.Sampler(self.ctx,False,
-                              pyopencl.addressing_mode.REPEAT,
+                              pyopencl.addressing_mode.CLAMP,
                               pyopencl.filter_mode.LINEAR)
 
-    # TODO make 2D image of transfer function
+    # TODO make better 2D image of transfer function
+    # for now grayscale and opacity mapped linearly from 0 to 100 (for MRHead)
+    num_channels = 4
+    mapping = numpy.linspace(0,1,100).astype(numpy.dtype('float32'))
+    transfer = numpy.transpose([mapping,]*num_channels).copy()
+    self.transferFunctionImage_dev = pyopencl.image_from_array(self.ctx, transfer, num_channels)
+
 
     self.transferFunctionSampler = pyopencl.Sampler(self.ctx,False,
                               pyopencl.addressing_mode.REPEAT,
                               pyopencl.filter_mode.LINEAR)
 
+    self.debugRendering = True
+    if self.debugRendering:
+      self.renderedImage = vtk.vtkImageData()
+      self.renderedImage.SetDimensions(self.renderSize[0], self.renderSize[1], 1)
+      self.renderedImage.SetNumberOfScalarComponents(4)
+      self.renderedImage.SetScalarTypeToUnsignedChar()
+      self.renderedImage.AllocateScalars()
+      #self.imageViewer = vtk.vtkImageViewer()
+      #self.imageViewer.SetColorWindow(255)
+      #self.imageViewer.SetColorLevel(128)
+      #self.imageViewer.SetInput(self.renderedImage)
+
+
   def render(self):
     print("Building program...")
 
-    self.prg.d_render(self.queue, self.renderArray.shape, None,
-        self.renderArray_dev, self.renderSize[0], self.renderSize[1], 
-        1.0, # density
-        1.0, # brightness
-        0.0, # transferOffset
-        1.0, # transferScale
-        invViewMatrix, # TODO
+    import numpy
+    self.prg.deviceRender(self.queue, self.renderSize, None,
+        self.renderArray_dev.data,
+        numpy.uint32(self.renderSize[0]), numpy.uint32(self.renderSize[1]),
+        numpy.float32(1.0), # density
+        numpy.float32(1.0), # brightness
+        numpy.float32(0.0), # transferOffset
+        numpy.float32(1.0), # transferScale
+        self.invViewMatrix_dev.data,
         self.volumeImage_dev,
-        self.transferFunctionImage_dev, # TODO
+        self.transferFunctionImage_dev,
+        self.volumeSampler,
         self.transferFunctionSampler)
 
     # TODO: put the renderArray into a png file for rendering
     ## Longer term, render and composite with ThreeD view
 
+    renderedImage = self.renderArray_dev.get()
+
+    if self.debugRendering:
+      print(renderedImage.shape)
+      print(renderedImage.min(), renderedImage.max())
+
+      import vtk.util.numpy_support
+      shape = list(self.renderedImage.GetDimensions())
+      if shape[-1] == 1:
+        shape = shape[:-1]
+      shape.reverse()
+      components = self.renderedImage.GetNumberOfScalarComponents()
+      if components > 1:
+        shape.append(components)
+      array = vtk.util.numpy_support.vtk_to_numpy(self.renderedImage.GetPointData().GetScalars()).reshape(shape)
+      array[:] = renderedImage
+      self.renderedImage.Modified()
+      #self.imageViewer.Render()
+      pngWriter = vtk.vtkPNGWriter()
+      pngWriter.SetFileName("/tmp/render.png")
+      pngWriter.SetInput(self.renderedImage)
+      pngWriter.Write()
+
+      print(self.renderedImage.GetScalarRange())
