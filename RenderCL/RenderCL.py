@@ -183,14 +183,16 @@ class RenderCLLogic(object):
     self.invViewMatrix_dev = pyopencl.array.to_device(self.queue, invViewMatrix)
 
     # pass currently selected volume to device
-    num_channels = 2
+    num_channels = 4
     shape = self.volumeArray.shape
     a = numpy.zeros(shape + (num_channels,)).astype(numpy.float32)
 
     #print(a)
     print(a.shape)
-    a[:,:,:,0] = numpy.ones_like(self.volumeArray) * 255
-    a[:,:,:,1] = self.volumeArray
+    a[:,:,:,0] = self.volumeArray * .1
+    a[:,:,:,1] = self.volumeArray * .1
+    #a[:,:,:,2] = numpy.ones_like(self.volumeArray) * 128
+    a[:,:,:,3] = numpy.ones_like(self.volumeArray) * 255
     #print(a)
     print(a.shape)
     print(a.max())
@@ -238,7 +240,7 @@ class RenderCLLogic(object):
     print("Building program...")
 
     import numpy
-    self.prg.deviceRender(self.queue, self.renderSize, None,
+    self.prg.deviceRenderRayCast(self.queue, self.renderSize, None,
         self.renderArray_dev.data,
         numpy.uint32(self.renderSize[0]), numpy.uint32(self.renderSize[1]),
         numpy.float32(1.0), # density
@@ -325,27 +327,20 @@ class RenderCLTest(unittest.TestCase):
     your test should break so they know that the feature is needed.
     """
     self.delayDisplay("Starting the test")
-    #
-    # first, get some data
-    #
-    import urllib
-    downloads = (
-        ('http://slicer.kitware.com/midas3/download?items=5767', 'FA.nrrd', slicer.util.loadVolume),
-      )
 
-    for url,name,loader in downloads:
-      filePath = slicer.app.temporaryPath + '/' + name
-      if not os.path.exists(filePath) or os.stat(filePath).st_size == 0:
-        print('Requesting download %s from %s...\n' % (name, url))
-        urllib.urlretrieve(url, filePath)
-      if loader:
-        print('Loading %s...\n' % (name,))
-        loader(filePath)
+    #
+    # first, get some sample data
+    #
+    self.delayDisplay("Get some data")
+    import SampleData
+    sampleDataLogic = SampleData.SampleDataLogic()
+    head = sampleDataLogic.downloadMRHead()
+
     self.delayDisplay('Finished with download and loading\n')
 
-    volumeNode = slicer.util.getNode(pattern="FA")
+    w = slicer.modules.RenderCLWidget
+    w.volumeSelector.setCurrentNode(head)
+    w.onRenderButtonClicked()
 
-    self.logic = RenderCLLogic(volumeNode)
-    self.logic.render()
 
     self.delayDisplay('Test passed!')
