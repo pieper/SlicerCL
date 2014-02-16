@@ -26,8 +26,6 @@
 #define rayStepSize %(rayStepSize)s
 #define rayMaxSteps %(rayMaxSteps)s
 
-#define IMAGE_SUPPORT
-
 // intersect ray with a box
 // http://www.siggraph.org/education/materials/HyperGraph/raytrace/rtinter3.htm
 
@@ -66,15 +64,11 @@ __kernel void deviceRender(
          uint imageW, uint imageH,
          float density, float brightness,
          float transferOffset, float transferScale,
-         __constant float* invViewMatrix
- #ifdef IMAGE_SUPPORT
-          ,
+         __constant float* invViewMatrix,
           __read_only image3d_t volume,
           __read_only image2d_t transferFunc,
           sampler_t volumeSampler,
-          sampler_t transferFuncSampler
- #endif
-         )
+          sampler_t transferFuncSampler )
 
 {
     uint x = get_global_id(0);
@@ -127,18 +121,15 @@ __kernel void deviceRender(
         pos = pos*0.5f+0.5f;    // map position to [0, 1] coordinates
 
         // read from 3D texture
-#ifdef IMAGE_SUPPORT
         sample = read_imagef(volume, volumeSampler, pos);
-      sample = read_imagef(volume, volumeSampler, (float4)(200 + u*100., 200. + v*100., 50.f, 0.0f));
 
         // lookup in transfer function texture
         float2 transfer_pos = (float2)( (sample.x - transferOffset) * transferScale, 0.5f );
         float4 col = read_imagef( transferFunc, transferFuncSampler, transfer_pos );
-      col = sample;
 
-#else
-        float4 col = (float4)( pos.x, pos.y, pos.z, 0.25f); // TODO: sample an array with interpolation
-#endif
+      col = sample;
+      col.w = 0.001;
+      col.b = col.r;
 
         // accumulate result
         float a = col.w * density; // here w is alpha
@@ -149,7 +140,7 @@ __kernel void deviceRender(
     }
     integratedPixel *= brightness;
 
-  integratedPixel = sample / 256;
+    integratedPixel *= .1f;
 
     if ( (x < imageW) && (y < imageH) ) {
         // write output color

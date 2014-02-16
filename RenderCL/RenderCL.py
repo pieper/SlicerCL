@@ -1,3 +1,5 @@
+import os
+import unittest
 from __main__ import vtk, qt, ctk, slicer
 
 #
@@ -19,6 +21,19 @@ and was partially funded by NIH grant P41 RR132183
 """ # replace with organization, grant and thanks.
     self.parent = parent
 
+    # Add this test to the SelfTest module's list for discovery when the module
+    # is created.  Since this module may be discovered before SelfTests itself,
+    # create the list if it doesn't already exist.
+    try:
+      slicer.selfTests
+    except AttributeError:
+      slicer.selfTests = {}
+    slicer.selfTests['RenderCL'] = self.runTest
+
+  def runTest(self):
+    tester = RenderCLTest()
+    tester.runTest()
+
 #
 # qRenderCLWidget
 #
@@ -39,11 +54,27 @@ class RenderCLWidget:
   def setup(self):
     # Instantiate and connect widgets ...
 
+    #
+    # Reload and Test area
+    #
+    reloadCollapsibleButton = ctk.ctkCollapsibleButton()
+    reloadCollapsibleButton.text = "Reload && Test"
+    self.layout.addWidget(reloadCollapsibleButton)
+    reloadFormLayout = qt.QFormLayout(reloadCollapsibleButton)
+
     # reload button
     self.reloadButton = qt.QPushButton("Reload")
     self.reloadButton.toolTip = "Reload this module."
-    self.layout.addWidget(self.reloadButton)
-    self.reloadButton.connect('clicked(bool)', self.onReload)
+    reloadFormLayout.addWidget(self.reloadButton)
+    self.reloadButton.connect('clicked()', self.onReload)
+
+    # reload and test button
+    # (use this during development, but remove it when delivering
+    #  your module to users)
+    self.reloadAndTestButton = qt.QPushButton("Reload and Test")
+    self.reloadAndTestButton.toolTip = "Reload this module and then run the self tests."
+    reloadFormLayout.addWidget(self.reloadAndTestButton)
+    self.reloadAndTestButton.connect('clicked()', self.onReloadAndTest)
 
     # Collapsible button
     optionsCollapsibleButton = ctk.ctkCollapsibleButton()
@@ -75,25 +106,29 @@ class RenderCLWidget:
     # Add vertical spacer
     self.layout.addStretch(1)
 
+  def onReload(self,moduleName="RenderCL"):
+    """Generic reload method for any scripted module.
+    ModuleWizard will subsitute correct default moduleName.
+    """
+    globals()[moduleName] = slicer.util.reloadScriptedModule(moduleName)
+
+  def onReloadAndTest(self,moduleName="RenderCL"):
+    try:
+      self.onReload()
+      evalString = 'globals()["%s"].%sTest()' % (moduleName, moduleName)
+      tester = eval(evalString)
+      tester.runTest()
+    except Exception, e:
+      import traceback
+      traceback.print_exc()
+      qt.QMessageBox.warning(slicer.util.mainWindow(),
+          "Reload and Test", 'Exception!\n\n' + str(e) + "\n\nSee Python Console for Stack Trace")
+
   def enter():
     try:
       import pyopencl
     except ImportError:
       qt.QMessageBox.warning(slicer.util.mainWindow(), "RenderCL", "No OpenCL for you!\nInstall pyopencl in slicer's python installation.\nAnd, you'll also need to be sure you have OpenCL compatible hardware and software.")
-
-  def onReload(self):
-    import imp, sys, os
-    filePath = slicer.modules.rendercl.path
-    p = os.path.dirname(filePath)
-    if not sys.path.__contains__(p):
-      sys.path.insert(0,p)
-
-    mod = "RenderCL"
-    fp = open(filePath, "r")
-    globals()[mod] = imp.load_module(mod, fp, filePath, ('.py', 'r', imp.PY_SOURCE))
-    fp.close()
-
-    globals()['r'] = r = globals()[mod].RenderCLWidget()
 
   def onRenderButtonClicked(self):
     volumeNode = self.volumeSelector.currentNode()
@@ -112,6 +147,7 @@ class RenderCLLogic(object):
 
     try:
       import pyopencl
+      import pyopencl.array
       import numpy
     except ImportError:
       raise "No OpenCL for you!\nInstall pyopencl in slicer's python installation."
@@ -142,31 +178,20 @@ class RenderCLLogic(object):
     self.prg = pyopencl.Program(self.ctx, source).build()
 
     # camera info
+    # TODO: get camera params
     invViewMatrix = numpy.eye(4,dtype=numpy.dtype('float32'))
     self.invViewMatrix_dev = pyopencl.array.to_device(self.queue, invViewMatrix)
 
-
-    if False:
-      # create a 3d image from the volume
-      num_channels = 2
-      volumeImage = (self.volumeArray[:], self.volumeArray[:], num_channels)
-      self.volumeImage_dev = pyopencl.image_from_array(self.ctx, self.volumeArray, num_channels, mode = "r", norm_int = True)
-      origin = (0,0,0)
-      region = tuple(numpy.asarray(self.volumeArray.shape) - numpy.asarray( (1,1,1) ))
-      #pyopencl.enqueue_fill_image(self.queue, self.volumeImage_dev, 128, 0, region, wait_for=None)
-      print("max ------------------")
-      print(self.volumeArray.max())
-
-    # odd sample code that seems to work
+    # pass currently selected volume to device
     num_channels = 2
     shape = self.volumeArray.shape
-    a = numpy.random.random(shape + (num_channels,)).astype(numpy.float32)
+    a = numpy.zeros(shape + (num_channels,)).astype(numpy.float32)
 
-    print(a)
+    #print(a)
     print(a.shape)
     a[:,:,:,0] = numpy.ones_like(self.volumeArray) * 255
     a[:,:,:,1] = self.volumeArray
-    print(a)
+    #print(a)
     print(a.shape)
     print(a.max())
 
@@ -176,7 +201,9 @@ class RenderCLLogic(object):
     self.renderArray = numpy.zeros(self.renderSize+(4,) ,dtype=numpy.dtype('ubyte'))
     self.renderArray_dev = pyopencl.array.to_device(self.queue, self.renderArray)
 
-    self.volumeSampler = pyopencl.Sampler(self.ctx,False,
+    self.volumeSampler = pyopencl.Sampler(self.ctx,
+                              # normalized_coords, addressing_mode, filter_mode
+                              True,
                               pyopencl.addressing_mode.CLAMP,
                               pyopencl.filter_mode.LINEAR)
 
@@ -188,7 +215,9 @@ class RenderCLLogic(object):
     self.transferFunctionImage_dev = pyopencl.image_from_array(self.ctx, transfer, num_channels)
 
 
-    self.transferFunctionSampler = pyopencl.Sampler(self.ctx,False,
+    self.transferFunctionSampler = pyopencl.Sampler(self.ctx,
+                              # normalized_coords, addressing_mode, filter_mode
+                              False,
                               pyopencl.addressing_mode.REPEAT,
                               pyopencl.filter_mode.LINEAR)
 
@@ -244,8 +273,79 @@ class RenderCLLogic(object):
       self.renderedImage.Modified()
       #self.imageViewer.Render()
       pngWriter = vtk.vtkPNGWriter()
-      pngWriter.SetFileName("/tmp/render.png")
+      pngWriter.SetFileName("/Users/pieper/Pictures/renderCLTests/render.png")
       pngWriter.SetInput(self.renderedImage)
       pngWriter.Write()
 
       print(self.renderedImage.GetScalarRange())
+
+
+class RenderCLTest(unittest.TestCase):
+  """
+  This is the test case for your scripted module.
+  """
+
+  def delayDisplay(self,message,msec=1000):
+    """This utility method displays a small dialog and waits.
+    This does two things: 1) it lets the event loop catch up
+    to the state of the test so that rendering and widget updates
+    have all taken place before the test continues and 2) it
+    shows the user/developer/tester the state of the test
+    so that we'll know when it breaks.
+    """
+    print(message)
+    self.info = qt.QDialog()
+    self.infoLayout = qt.QVBoxLayout()
+    self.info.setLayout(self.infoLayout)
+    self.label = qt.QLabel(message,self.info)
+    self.infoLayout.addWidget(self.label)
+    qt.QTimer.singleShot(msec, self.info.close)
+    self.info.exec_()
+
+  def setUp(self):
+    """ Do whatever is needed to reset the state - typically a scene clear will be enough.
+    """
+    slicer.mrmlScene.Clear(0)
+
+  def runTest(self):
+    """Run as few or as many tests as needed here.
+    """
+    self.setUp()
+    self.test_RenderCL1()
+
+  def test_RenderCL1(self):
+    """ Ideally you should have several levels of tests.  At the lowest level
+    tests sould exercise the functionality of the logic with different inputs
+    (both valid and invalid).  At higher levels your tests should emulate the
+    way the user would interact with your code and confirm that it still works
+    the way you intended.
+    One of the most important features of the tests is that it should alert other
+    developers when their changes will have an impact on the behavior of your
+    module.  For example, if a developer removes a feature that you depend on,
+    your test should break so they know that the feature is needed.
+    """
+    self.delayDisplay("Starting the test")
+    #
+    # first, get some data
+    #
+    import urllib
+    downloads = (
+        ('http://slicer.kitware.com/midas3/download?items=5767', 'FA.nrrd', slicer.util.loadVolume),
+      )
+
+    for url,name,loader in downloads:
+      filePath = slicer.app.temporaryPath + '/' + name
+      if not os.path.exists(filePath) or os.stat(filePath).st_size == 0:
+        print('Requesting download %s from %s...\n' % (name, url))
+        urllib.urlretrieve(url, filePath)
+      if loader:
+        print('Loading %s...\n' % (name,))
+        loader(filePath)
+    self.delayDisplay('Finished with download and loading\n')
+
+    volumeNode = slicer.util.getNode(pattern="FA")
+
+    self.logic = RenderCLLogic(volumeNode)
+    self.logic.render()
+
+    self.delayDisplay('Test passed!')
