@@ -140,7 +140,10 @@ class RenderCLWidget:
 
 
 class RenderCLLogic(object):
-  def __init__(self,volumeNode,contextPreference='GPU',renderSize=(512,512)):
+  def __init__(self,volumeNode,contextPreference='GPU',renderSize=(1024,1024)):
+    """
+    contextPreference is 'CPU' or 'GPU'
+    """
     self.volumeNode = volumeNode
     self.volumeArray = slicer.util.array(self.volumeNode.GetID())
     self.renderSize = renderSize
@@ -178,9 +181,22 @@ class RenderCLLogic(object):
     self.prg = pyopencl.Program(self.ctx, source).build()
 
     # camera info
-    # TODO: get camera params
-    invViewMatrix = numpy.eye(4,dtype=numpy.dtype('float32'))
-    self.invViewMatrix_dev = pyopencl.array.to_device(self.queue, invViewMatrix)
+    # TODO: get camera params, for now, pick a nice view based on render convention
+    viewMatrix = numpy.eye(4,dtype=numpy.dtype('float32'))
+    #viewNormal = numpy.array([-1, -1, 0, 0])
+    viewNormal = numpy.array([-1, 0, 0, 0])
+    viewMatrix[0] = viewNormal / numpy.linalg.norm(viewNormal)
+    #viewRight = numpy.array([-1, 1, 0, 0])
+    viewRight = numpy.array([0, 1, 0, 0])
+    viewMatrix[1] = viewRight / numpy.linalg.norm(viewRight)
+    viewUp = numpy.array([0, 0, 1, 0])
+    viewMatrix[2] = viewUp / numpy.linalg.norm(viewUp)
+    viewMatrix[0,3] = 4
+    viewMatrix[1,3] = 0
+
+    print(viewMatrix)
+
+    self.viewMatrix_dev = pyopencl.array.to_device(self.queue, viewMatrix)
 
     # pass currently selected volume to device
     num_channels = 4
@@ -205,8 +221,8 @@ class RenderCLLogic(object):
 
     self.volumeSampler = pyopencl.Sampler(self.ctx,
                               # normalized_coords, addressing_mode, filter_mode
-                              True,
-                              pyopencl.addressing_mode.CLAMP,
+                              False,
+                              pyopencl.addressing_mode.NONE,
                               pyopencl.filter_mode.LINEAR)
 
     # TODO make better 2D image of transfer function
@@ -220,7 +236,7 @@ class RenderCLLogic(object):
     self.transferFunctionSampler = pyopencl.Sampler(self.ctx,
                               # normalized_coords, addressing_mode, filter_mode
                               False,
-                              pyopencl.addressing_mode.REPEAT,
+                              pyopencl.addressing_mode.NONE,
                               pyopencl.filter_mode.LINEAR)
 
     self.debugRendering = True
@@ -237,9 +253,70 @@ class RenderCLLogic(object):
 
 
   def render(self):
+    try:
+      import pyopencl
+      import pyopencl.array
+      import numpy
+      import vtk.util.numpy_support
+    except ImportError:
+      raise "No OpenCL for you!\nInstall pyopencl in slicer's python installation."
     print("Building program...")
 
-    import numpy
+    # get the camera parameters from default 3D window
+    layoutManager = slicer.app.layoutManager()
+    threeDWidget = layoutManager.threeDWidget(0)
+    threeDView = threeDWidget.threeDView()
+    renderWindow = threeDView.renderWindow()
+    renderers = renderWindow.GetRenderers()
+    renderer = renderers.GetItemAsObject(0)
+    camera = renderer.GetActiveCamera()
+
+    viewPosition = numpy.array(camera.GetPosition())
+    focalPoint = numpy.array(camera.GetFocalPoint())
+    viewDistance = numpy.linalg.norm(focalPoint - viewPosition)
+    viewNormal = (focalPoint - viewPosition) / viewDistance
+    viewUp = numpy.array(camera.GetViewUp())
+    viewAngle = camera.GetViewAngle()
+    viewRight = numpy.cross(viewUp,viewNormal)
+
+    # camera info as view matrix
+    viewMatrix = numpy.eye(4,dtype=numpy.dtype('float32'))
+    #viewNormal = numpy.array([-1, -1, 0, 0])
+    #viewNormal = numpy.array([-1, 0, 0, 0])
+    #viewMatrix[0] = viewNormal / numpy.linalg.norm(viewNormal)
+    #viewRight = numpy.array([-1, 1, 0, 0])
+    #viewRight = numpy.array([0, 1, 0, 0])
+    #viewMatrix[1] = viewRight / numpy.linalg.norm(viewRight)
+    #viewUp = numpy.array([0, 0, 1, 0])
+    #viewMatrix[2] = viewUp / numpy.linalg.norm(viewUp)
+    #viewMatrix[0,3] = 4
+    #viewMatrix[1,3] = 0
+
+    # make them 4 component
+    viewNormal = numpy.append(viewNormal, [0,])
+    viewRight = numpy.append(viewRight, [0,])
+    viewUp = numpy.append(viewUp, [0,])
+    viewPosition = numpy.append(viewPosition, [0,])
+
+    viewMatrix[0] = viewNormal
+    viewMatrix[1] = viewRight
+    viewMatrix[2] = viewUp
+    viewMatrix[3] = viewPosition
+
+    print(viewMatrix)
+    self.viewMatrix_dev = pyopencl.array.to_device(self.queue, viewMatrix)
+
+    rasToIJK = vtk.vtkMatrix4x4()
+    self.volumeNode.GetRASToIJKMatrix(rasToIJK)
+
+    rasToIJKArray = numpy.eye(4,dtype=numpy.dtype('float32'))
+    for row in range(4):
+      for col in range(4):
+        rasToIJKArray[row,col] = rasToIJK.GetElement(row,col)
+
+    self.rasToIJK_dev = pyopencl.array.to_device(self.queue, rasToIJKArray)
+
+
     self.prg.deviceRenderRayCast(self.queue, self.renderSize, None,
         self.renderArray_dev.data,
         numpy.uint32(self.renderSize[0]), numpy.uint32(self.renderSize[1]),
@@ -247,8 +324,10 @@ class RenderCLLogic(object):
         numpy.float32(1.0), # brightness
         numpy.float32(0.0), # transferOffset
         numpy.float32(1.0), # transferScale
-        self.invViewMatrix_dev.data,
+        self.viewMatrix_dev.data,
+        numpy.float32(viewAngle),
         self.volumeImage_dev,
+        self.rasToIJK_dev.data,
         self.transferFunctionImage_dev,
         self.volumeSampler,
         self.transferFunctionSampler)
@@ -262,7 +341,6 @@ class RenderCLLogic(object):
       print(renderedImage.shape)
       print(renderedImage.min(), renderedImage.max())
 
-      import vtk.util.numpy_support
       shape = list(self.renderedImage.GetDimensions())
       if shape[-1] == 1:
         shape = shape[:-1]

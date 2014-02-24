@@ -29,6 +29,8 @@
 // intersect ray with a box
 // http://www.siggraph.org/education/materials/HyperGraph/raytrace/rtinter3.htm
 
+int intersectBox(float4 rayOrigin, float4 rayDirection, float4 boxMin, float4 boxMax, float *tNear, float *tFar);
+
 int intersectBox(float4 rayOrigin, float4 rayDirection, float4 boxMin, float4 boxMax, float *tNear, float *tFar)
 {
     // compute intersection of ray with all six bbox planes
@@ -50,15 +52,6 @@ int intersectBox(float4 rayOrigin, float4 rayDirection, float4 boxMin, float4 bo
     return smallest_tMax > largest_tMin;
 }
 
-uint rgbaFloatToInt(float4 rgba)
-{
-    rgba.x = clamp( rgba.x, 0.0f, 1.0f );
-    rgba.y = clamp( rgba.y, 0.0f, 1.0f );
-    rgba.z = clamp( rgba.z, 0.0f, 1.0f );
-    rgba.w = clamp( rgba.w, 0.0f, 1.0f );
-    return ((uint)(rgba.w * 255.0f)<<24) | ((uint)(rgba.z * 255.0f)<<16) | ((uint)(rgba.y * 255.0f)<<8) | (uint)(rgba.x * 255.0f);
-}
-
 // volume ray caster - starts from the front and collects color and opacity
 // contributions until fully saturated.
 __kernel void deviceRenderRayCast(
@@ -66,8 +59,10 @@ __kernel void deviceRenderRayCast(
          uint imageW, uint imageH,
          float density, float brightness,
          float transferOffset, float transferScale,
-         __constant float* invViewMatrix,
+         __constant float* viewMatrix,
+         float viewAngle,
          __read_only image3d_t volume,
+         __constant float* rasToIJK,
          __read_only image2d_t transferFunc,
          sampler_t volumeSampler,
          sampler_t transferFuncSampler )
@@ -78,31 +73,57 @@ __kernel void deviceRenderRayCast(
     float u = (x / (float) imageW) * 2.0f - 1.0f;
     float v = (y / (float) imageH) * 2.0f - 1.0f;
 
+    // vectors to map RAS to ijk
+    float4 rasToI =  (float4)( rasToIJK[0], rasToIJK[1], rasToIJK[2], rasToIJK[3] );
+    float4 rasToJ =  (float4)( rasToIJK[4], rasToIJK[5], rasToIJK[6], rasToIJK[7] );
+    float4 rasToK =  (float4)( rasToIJK[8], rasToIJK[9], rasToIJK[10], rasToIJK[11] );
+
     // TODO: these should be the extents of the RAS box of the volume
     // Note they must be axis aligned so that should be fixed
     // For now use normalized access mode in sampler - TODO switch to actual IJK
-    float4 boxMin = (float4)( -1.0f, -1.0f, -1.0f, 1.0f);
-    float4 boxMax = (float4)(  1.0f,  1.0f,  1.0f, 1.0f);
+    //float4 boxMin = (float4)( -1.0f, -1.0f, -1.0f, 1.0f);
+    //float4 boxMax = (float4)(  1.0f,  1.0f,  1.0f, 1.0f);
+    float4 boxMin = (float4)( .0f, .0f, .0f, 1.0f);
+    float w = get_image_width(volume);
+    float h = get_image_height(volume);
+    float d = get_image_depth(volume);
+    float4 boxMax = (float4)( w,  h,  d, 1.0f);
+
+    float4 rasBoxMin = (float4)(-90.f, -113.f, -100.f, 1.f);
+    float4 rasBoxMax = (float4)(90.f, 113.f, 100.f, 1.f);
+
 
     // calculate eye ray in world space
     float4 eyeRayOrigin;
     float4 eyeRayDirection;
 
-    eyeRayOrigin = (float4)(invViewMatrix[3], invViewMatrix[7], invViewMatrix[11], 1.0f);
+    // hard code a view from the side
+    eyeRayOrigin = (float4)(0, 0, -1.5, 0);
+    // pull from viewMatrix - this is view (camera) position
+    eyeRayOrigin = (float4)(viewMatrix[12], viewMatrix[13], viewMatrix[14], 0.f);
 
-    float4 normalizedPixelVector = normalize( ( (float4)(u, v, -2.0f, 0.0f) ) );
+    float4 normalizedPixelVector = normalize( ( (float4)(u, v, 1.0f, 0.0f) ) );
     float4 viewVector;
-    viewVector = ((float4)(invViewMatrix[0],invViewMatrix[1],invViewMatrix[2],invViewMatrix[3]));
+
+    // viewRight
+    viewVector = (float4)(viewMatrix[4], viewMatrix[5], viewMatrix[6], 0.f);
     eyeRayDirection.x = dot( normalizedPixelVector, viewVector );
-    viewVector = ((float4)(invViewMatrix[4],invViewMatrix[5],invViewMatrix[6],invViewMatrix[7]));
+
+    // viewUp
+    viewVector = (float4)(viewMatrix[8], viewMatrix[9], viewMatrix[10], 0.f);
     eyeRayDirection.y = dot( normalizedPixelVector, viewVector );
-    viewVector = ((float4)(invViewMatrix[8],invViewMatrix[9],invViewMatrix[10],invViewMatrix[11]));
+
+    // viewNormal
+    viewVector = (float4)(viewMatrix[0], viewMatrix[1], viewMatrix[2], 0.f);
     eyeRayDirection.z = dot( normalizedPixelVector,  viewVector );
-    eyeRayDirection.w = 0.0f;
+
+    eyeRayDirection.w = 1.0f;
+
+    float4 pointLight = (float4)(25.f, 25.f, -20.f, 0.);
 
     // find intersection with box
     float tNear, tFar;
-    int hit = intersectBox( eyeRayOrigin, eyeRayDirection, boxMin, boxMax, &tNear, &tFar );
+    int hit = intersectBox( eyeRayOrigin, eyeRayDirection, rasBoxMin, rasBoxMax, &tNear, &tFar );
     if (!hit) {
         if ((x < imageW) && (y < imageH)) {  //TODO: factor this out so there's a single return path
             // write output color
@@ -115,30 +136,69 @@ __kernel void deviceRenderRayCast(
 
     // march along ray from front, accumulating color and opacity
     float4 integratedPixel = (float4)(0.0f, 0.0f, 0.0f, 0.0f);
-    float tCurrent = tNear;
+    float gradientSize = 0.1;
+    float tCurrent = tNear + gradientSize;
     float4 sample;
 
     for(uint i = 0; i < rayMaxSteps; i++) {
         float4 pos = eyeRayOrigin + eyeRayDirection * tCurrent;
-        pos = pos*0.5f+0.5f;    // map position to [0, 1] coordinates
+        float4 normPos = pos*0.5f+0.5f;    // map position to [0, 1] coordinates
+
+        float4 ijkPos;
+        ijkPos.x = dot(rasToI,pos);
+        ijkPos.y = dot(rasToJ,pos);
+        ijkPos.z = dot(rasToK,pos);
+
+        float4 color;
 
         // read from 3D texture
-        sample = read_imagef(volume, volumeSampler, pos);
+        sample = read_imagef(volume, volumeSampler, ijkPos);
 
         // lookup in transfer function texture
-        float2 transfer_pos = (float2)( (sample.x - transferOffset) * transferScale, 0.5f );
-        float4 col = read_imagef( transferFunc, transferFuncSampler, transfer_pos );
+        //float2 transfer_pos = (float2)( (sample.x - transferOffset) * transferScale, 0.5f );
+        //color = read_imagef( transferFunc, transferFuncSampler, transfer_pos );
 
-      col = sample;
-      col.w = 0.01;
-      //col.b = col.r;
+        // sample 1 pixel gradient (N is -1)
+        float s100 = read_imagef(volume, volumeSampler, ijkPos + (float4)(gradientSize,0,0,0)).x;
+        float sN00 = read_imagef(volume, volumeSampler, ijkPos - (float4)(gradientSize,0,0,0)).x;
+        float s010 = read_imagef(volume, volumeSampler, ijkPos + (float4)(0,gradientSize,0,0)).x;
+        float s0N0 = read_imagef(volume, volumeSampler, ijkPos - (float4)(0,gradientSize,0,0)).x;
+        float s001 = read_imagef(volume, volumeSampler, ijkPos + (float4)(0,0,gradientSize,0)).x;
+        float s00N = read_imagef(volume, volumeSampler, ijkPos - (float4)(0,0,gradientSize,0)).x;
+
+        float4 gradient = {
+            0.5f*(s100-sN00), 
+            0.5f*(s010-s0N0),
+            0.5f*(s001-s00N),
+            0.0f
+        };
+        float gradientMagnitude = length(gradient);
+        float4 normal = normalize(gradient);
+
+        // Phong lighting
+        float4 Cdiffuse = (float4)(1,1,0,0);
+        float4 Cspecular = (float4)(1,1,1,0);
+        float Kdiffuse = .5;
+        float Kspecular = .1;
+        float Shininess = 5;
+
+        float4 V = normalize(eyeRayOrigin - pos);
+        float4 L = normalize(pointLight - pos);
+        float4 R = 2.f*(dot(L,normal))*normal - L;
+        float4 phong = Kdiffuse * dot(L,normal) * Cdiffuse + 
+                       Kspecular * pow( dot(R,V), Shininess ) * Cspecular;
+
+
+      color = 10 * (sample + phong);
+      color.w = 0.01;
+      color.w = sample.x/1000000. + gradientMagnitude*.05;
 
         // accumulate result
-        float a = col.w * density; // here w is alpha
-        integratedPixel = mix( integratedPixel, col, (float4)(a, a, a, a) );
+        float a = color.w * density; // here w is alpha
+        integratedPixel = mix( integratedPixel, color, (float4)(a, a, a, a) );
 
         tCurrent += rayStepSize;
-        if (tCurrent > tFar) {
+        if (tCurrent >= tFar - gradientSize) {
           // stepped out of the volume, so no further contributions
           break;
         }
@@ -150,113 +210,11 @@ __kernel void deviceRenderRayCast(
     }
     integratedPixel *= brightness;
 
-    integratedPixel *= .1f;
+    integratedPixel *= .01f;
 
     if ( (x < imageW) && (y < imageH) ) {
         // write output color
         uint i = (y * imageW) + x;
-        //d_output[i] = rgbaFloatToInt( integratedPixel );
-
-        uchar4 rgba;
-        rgba.x = (uchar) 255. * clamp( integratedPixel.x, 0.0f, 1.0f );
-        rgba.y = (uchar) 255. * clamp( integratedPixel.y, 0.0f, 1.0f );
-        rgba.z = (uchar) 255. * clamp( integratedPixel.z, 0.0f, 1.0f );
-        rgba.w = (uchar) 255. * clamp( integratedPixel.w, 0.0f, 1.0f );
-
-      rgba.w = (uchar) 255;
-        d_output[i] = rgba;
-    }
-}
-
-// Based on NVIDIA example - composites whole volume from back
-// Deprecated - not supported and to be removed
-__kernel void deviceRenderBackToFront(
-         __global uchar4 *d_output,
-         uint imageW, uint imageH,
-         float density, float brightness,
-         float transferOffset, float transferScale,
-         __constant float* invViewMatrix,
-         __read_only image3d_t volume,
-         __read_only image2d_t transferFunc,
-         sampler_t volumeSampler,
-         sampler_t transferFuncSampler )
-{
-    uint x = get_global_id(0);
-    uint y = get_global_id(1);
-
-    float u = (x / (float) imageW) * 2.0f - 1.0f;
-    float v = (y / (float) imageH) * 2.0f - 1.0f;
-
-    // TODO: these should be the extents of the RAS box of the volume
-    // Note they must be axis aligned so that should be fixed
-    // For now use normalized access mode in sampler - TODO switch to actual IJK
-    float4 boxMin = (float4)( -1.0f, -1.0f, -1.0f, 1.0f);
-    float4 boxMax = (float4)(  1.0f,  1.0f,  1.0f, 1.0f);
-
-    // calculate eye ray in world space
-    float4 eyeRayOrigin;
-    float4 eyeRayDirection;
-
-    eyeRayOrigin = (float4)(invViewMatrix[3], invViewMatrix[7], invViewMatrix[11], 1.0f);
-
-    float4 normalizedPixelVector = normalize( ( (float4)(u, v, -2.0f, 0.0f) ) );
-    float4 viewVector;
-    viewVector = ((float4)(invViewMatrix[0],invViewMatrix[1],invViewMatrix[2],invViewMatrix[3]));
-    eyeRayDirection.x = dot( normalizedPixelVector, viewVector );
-    viewVector = ((float4)(invViewMatrix[4],invViewMatrix[5],invViewMatrix[6],invViewMatrix[7]));
-    eyeRayDirection.y = dot( normalizedPixelVector, viewVector );
-    viewVector = ((float4)(invViewMatrix[8],invViewMatrix[9],invViewMatrix[10],invViewMatrix[11]));
-    eyeRayDirection.z = dot( normalizedPixelVector,  viewVector );
-    eyeRayDirection.w = 0.0f;
-
-    // find intersection with box
-    float tNear, tFar;
-    int hit = intersectBox( eyeRayOrigin, eyeRayDirection, boxMin, boxMax, &tNear, &tFar );
-    if (!hit) {
-        if ((x < imageW) && (y < imageH)) {  //TODO: factor this out so there's a single return path
-            // write output color
-            uint i =(y * imageW) + x;
-            d_output[i] = (uchar4)(100,100,0,255);
-        }
-        return;
-    }
-    if (tNear < 0.0f) tNear = 0.0f;     // clamp to near plane
-
-    // march along ray from back to front, accumulating color
-    float4 integratedPixel = (float4)(0.0f, 0.0f, 0.0f, 0.0f);
-    float tCurrent = tFar;
-    float4 sample;
-
-    for(uint i = 0; i < rayMaxSteps; i++) {
-        float4 pos = eyeRayOrigin + eyeRayDirection * tCurrent;
-        pos = pos*0.5f+0.5f;    // map position to [0, 1] coordinates
-
-        // read from 3D texture
-        sample = read_imagef(volume, volumeSampler, pos);
-
-        // lookup in transfer function texture
-        float2 transfer_pos = (float2)( (sample.x - transferOffset) * transferScale, 0.5f );
-        float4 col = read_imagef( transferFunc, transferFuncSampler, transfer_pos );
-
-      col = sample;
-      col.w = 0.001;
-      //col.b = col.r;
-
-        // accumulate result
-        float a = col.w * density; // here w is alpha
-        integratedPixel = mix( integratedPixel, col, (float4)(a, a, a, a) );
-
-        tCurrent -= rayStepSize;
-        if (tCurrent < tNear) break;
-    }
-    integratedPixel *= brightness;
-
-    integratedPixel *= .1f;
-
-    if ( (x < imageW) && (y < imageH) ) {
-        // write output color
-        uint i = (y * imageW) + x;
-        //d_output[i] = rgbaFloatToInt( integratedPixel );
 
         uchar4 rgba;
         rgba.x = (uchar) 255. * clamp( integratedPixel.x, 0.0f, 1.0f );
