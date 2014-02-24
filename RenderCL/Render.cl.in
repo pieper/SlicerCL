@@ -97,25 +97,15 @@ __kernel void deviceRenderRayCast(
     float4 eyeRayOrigin;
     float4 eyeRayDirection;
 
-    // hard code a view from the side
-    eyeRayOrigin = (float4)(0, 0, -1.5, 0);
     // pull from viewMatrix - this is view (camera) position
     eyeRayOrigin = (float4)(viewMatrix[12], viewMatrix[13], viewMatrix[14], 0.f);
 
-    float4 normalizedPixelVector = normalize( ( (float4)(u, v, 1.0f, 0.0f) ) );
-    float4 viewVector;
+    // ||viewNormal + u * viewRight + v * viewUp||
+    eyeRayDirection = normalize (
+                                (float4)(viewMatrix[0], viewMatrix[1], viewMatrix[2], 0.f)
+                          + u * (float4)(viewMatrix[4], viewMatrix[5], viewMatrix[6], 0.f)
+                          + v * (float4)(viewMatrix[8], viewMatrix[9], viewMatrix[10], 0.f) );
 
-    // viewRight
-    viewVector = (float4)(viewMatrix[4], viewMatrix[5], viewMatrix[6], 0.f);
-    eyeRayDirection.x = dot( normalizedPixelVector, viewVector );
-
-    // viewUp
-    viewVector = (float4)(viewMatrix[8], viewMatrix[9], viewMatrix[10], 0.f);
-    eyeRayDirection.y = dot( normalizedPixelVector, viewVector );
-
-    // viewNormal
-    viewVector = (float4)(viewMatrix[0], viewMatrix[1], viewMatrix[2], 0.f);
-    eyeRayDirection.z = dot( normalizedPixelVector,  viewVector );
 
     eyeRayDirection.w = 1.0f;
 
@@ -167,7 +157,7 @@ __kernel void deviceRenderRayCast(
         float s00N = read_imagef(volume, volumeSampler, ijkPos - (float4)(0,0,gradientSize,0)).x;
 
         float4 gradient = {
-            0.5f*(s100-sN00), 
+            0.5f*(s100-sN00),
             0.5f*(s010-s0N0),
             0.5f*(s001-s00N),
             0.0f
@@ -185,7 +175,7 @@ __kernel void deviceRenderRayCast(
         float4 V = normalize(eyeRayOrigin - pos);
         float4 L = normalize(pointLight - pos);
         float4 R = 2.f*(dot(L,normal))*normal - L;
-        float4 phong = Kdiffuse * dot(L,normal) * Cdiffuse + 
+        float4 phong = Kdiffuse * dot(L,normal) * Cdiffuse +
                        Kspecular * pow( dot(R,V), Shininess ) * Cspecular;
 
 

@@ -279,31 +279,19 @@ class RenderCLLogic(object):
     viewAngle = camera.GetViewAngle()
     viewRight = numpy.cross(viewUp,viewNormal)
 
-    # camera info as view matrix
-    viewMatrix = numpy.eye(4,dtype=numpy.dtype('float32'))
-    #viewNormal = numpy.array([-1, -1, 0, 0])
-    #viewNormal = numpy.array([-1, 0, 0, 0])
-    #viewMatrix[0] = viewNormal / numpy.linalg.norm(viewNormal)
-    #viewRight = numpy.array([-1, 1, 0, 0])
-    #viewRight = numpy.array([0, 1, 0, 0])
-    #viewMatrix[1] = viewRight / numpy.linalg.norm(viewRight)
-    #viewUp = numpy.array([0, 0, 1, 0])
-    #viewMatrix[2] = viewUp / numpy.linalg.norm(viewUp)
-    #viewMatrix[0,3] = 4
-    #viewMatrix[1,3] = 0
-
     # make them 4 component
     viewNormal = numpy.append(viewNormal, [0,])
     viewRight = numpy.append(viewRight, [0,])
     viewUp = numpy.append(viewUp, [0,])
     viewPosition = numpy.append(viewPosition, [0,])
 
+    # camera info as view matrix
+    viewMatrix = numpy.eye(4,dtype=numpy.dtype('float32'))
     viewMatrix[0] = viewNormal
     viewMatrix[1] = viewRight
     viewMatrix[2] = viewUp
     viewMatrix[3] = viewPosition
 
-    print(viewMatrix)
     self.viewMatrix_dev = pyopencl.array.to_device(self.queue, viewMatrix)
 
     rasToIJK = vtk.vtkMatrix4x4()
@@ -332,7 +320,6 @@ class RenderCLLogic(object):
         self.volumeSampler,
         self.transferFunctionSampler)
 
-    # TODO: put the renderArray into a png file for rendering
     ## Longer term, render and composite with ThreeD view
 
     renderedImage = self.renderArray_dev.get()
