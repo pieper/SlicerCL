@@ -89,6 +89,7 @@ __kernel void deviceRenderRayCast(
     float d = get_image_depth(volume);
     float4 boxMax = (float4)( w,  h,  d, 1.0f);
 
+    // TODO: hard coded!
     float4 rasBoxMin = (float4)(-90.f, -113.f, -100.f, 1.f);
     float4 rasBoxMax = (float4)(90.f, 113.f, 100.f, 1.f);
 
@@ -125,16 +126,27 @@ __kernel void deviceRenderRayCast(
     if (tNear < 0.0f) tNear = 0.0f;     // clamp to near plane
 
     // march along ray from front, accumulating color and opacity
-    float4 integratedPixel = (float4)(0.0f, 0.0f, 0.0f, 0.0f);
-    float gradientSize = 0.1;
+    float4 integratedPixel = (float4)(0.0f, 0.0f, 1.f, 0.0f);
+    float gradientSize = 1.;
     float tCurrent = tNear + gradientSize;
     float4 sample;
 
     for(uint i = 0; i < rayMaxSteps; i++) {
+
         float4 pos = eyeRayOrigin + eyeRayDirection * tCurrent;
-        float4 normPos = pos*0.5f+0.5f;    // map position to [0, 1] coordinates
+
+        // add a vector field proportional to i, u, v 
+        float4 vectorField;
+        float blend = i * 10.f / rayMaxSteps;
+        vectorField.x = blend * sin(90. * u) + cos(90. * v);
+        vectorField.y = blend * -cos(90. * u) + sin(90. * v);
+        vectorField.z = 0.f;
+
+        pos += vectorField;
+
 
         float4 ijkPos;
+        pos.w = 1.f;
         ijkPos.x = dot(rasToI,pos);
         ijkPos.y = dot(rasToJ,pos);
         ijkPos.z = dot(rasToK,pos);
@@ -179,15 +191,27 @@ __kernel void deviceRenderRayCast(
                        Kspecular * pow( dot(R,V), Shininess ) * Cspecular;
 
 
-      color = 10 * (sample + phong);
-      color.w = 0.01;
-      color.w = sample.x/1000000. + gradientMagnitude*.05;
+      color = 100 * (phong);
+      color = 0.1f * (sample);
+      color = .1f * (sample + phong);
+      color.w = gradientMagnitude*.05;
+      color.w = 0.001;
+      color.w = sample.x/1.f;
+      color.w = sample.x/100000.f + gradientMagnitude*.5f;
+      color.w = gradientMagnitude*.01f;
+      //if (sample.x < 50.f) color.w = 0.f;
+      color.w = clamp( color.w, 0.f, 1.f );
 
         // accumulate result
         float a = color.w * density; // here w is alpha
-        integratedPixel = mix( integratedPixel, color, (float4)(a, a, a, a) );
+        float4 newPixel = mix( integratedPixel, color, (float4)(a, a, a, a) );
+        newPixel.w = integratedPixel.w + a;
+        integratedPixel = newPixel;
 
-        tCurrent += rayStepSize;
+        //if (i == 50) integratedPixel = color;
+
+        //tCurrent += rayStepSize;
+        tCurrent += .15f;
         if (tCurrent >= tFar - gradientSize) {
           // stepped out of the volume, so no further contributions
           break;
@@ -197,10 +221,11 @@ __kernel void deviceRenderRayCast(
           // pixel is saturated, no reason to go further
           break;
         }
-    }
-    integratedPixel *= brightness;
 
-    integratedPixel *= .01f;
+    }
+    //integratedPixel *= brightness;
+
+    //integratedPixel *= .01f;
 
     if ( (x < imageW) && (y < imageH) ) {
         // write output color

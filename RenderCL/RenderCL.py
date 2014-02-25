@@ -175,28 +175,10 @@ class RenderCLLogic(object):
     fp.close()
 
     source = sourceIn % { # TODO: depend on image dimensions and spacing
-        'rayStepSize' : '0.01f',
+        'rayStepSize' : '0.1f',
         'rayMaxSteps' : '500',
         }
     self.prg = pyopencl.Program(self.ctx, source).build()
-
-    # camera info
-    # TODO: get camera params, for now, pick a nice view based on render convention
-    viewMatrix = numpy.eye(4,dtype=numpy.dtype('float32'))
-    #viewNormal = numpy.array([-1, -1, 0, 0])
-    viewNormal = numpy.array([-1, 0, 0, 0])
-    viewMatrix[0] = viewNormal / numpy.linalg.norm(viewNormal)
-    #viewRight = numpy.array([-1, 1, 0, 0])
-    viewRight = numpy.array([0, 1, 0, 0])
-    viewMatrix[1] = viewRight / numpy.linalg.norm(viewRight)
-    viewUp = numpy.array([0, 0, 1, 0])
-    viewMatrix[2] = viewUp / numpy.linalg.norm(viewUp)
-    viewMatrix[0,3] = 4
-    viewMatrix[1,3] = 0
-
-    print(viewMatrix)
-
-    self.viewMatrix_dev = pyopencl.array.to_device(self.queue, viewMatrix)
 
     # pass currently selected volume to device
     num_channels = 4
@@ -277,7 +259,7 @@ class RenderCLLogic(object):
     viewNormal = (focalPoint - viewPosition) / viewDistance
     viewUp = numpy.array(camera.GetViewUp())
     viewAngle = camera.GetViewAngle()
-    viewRight = numpy.cross(viewUp,viewNormal)
+    viewRight = numpy.cross(viewNormal,viewUp)
 
     # make them 4 component
     viewNormal = numpy.append(viewNormal, [0,])
@@ -296,6 +278,14 @@ class RenderCLLogic(object):
 
     rasToIJK = vtk.vtkMatrix4x4()
     self.volumeNode.GetRASToIJKMatrix(rasToIJK)
+    
+    transformNode = self.volumeNode.GetParentTransformNode()
+    if transformNode:
+      if transformNode.IsTransformToWorldLinear():
+        rasToRAS = vtk.vtkMatrix4x4()
+        transformNode.GetMatrixTransformToWorld(rasToRAS)
+        rasToRAS.Invert()
+        rasToRAS.Multiply4x4(rasToIJK, rasToRAS, rasToIJK)
 
     rasToIJKArray = numpy.eye(4,dtype=numpy.dtype('float32'))
     for row in range(4):
