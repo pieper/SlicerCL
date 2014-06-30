@@ -1,6 +1,6 @@
 
 //
-// Based on example code from NVIDIA's opencl SDK, and adapted
+// Based on example code from NVIDIA's opencl SDK, and heavily modified and adapted
 // for use with pyopencl.
 //
 // The .in version of this file contains symbols of the
@@ -23,8 +23,11 @@
  */
 
 
+
 #define rayStepSize %(rayStepSize)s
 #define rayMaxSteps %(rayMaxSteps)s
+
+
 
 // intersect ray with a box
 // http://www.siggraph.org/education/materials/HyperGraph/raytrace/rtinter3.htm
@@ -51,6 +54,8 @@ int intersectBox(float4 rayOrigin, float4 rayDirection, float4 boxMin, float4 bo
 
     return smallest_tMax > largest_tMin;
 }
+
+
 
 // volume ray caster - starts from the front and collects color and opacity
 // contributions until fully saturated.
@@ -110,7 +115,7 @@ __kernel void deviceRenderRayCast(
 
     eyeRayDirection.w = 1.0f;
 
-    float4 pointLight = (float4)(25.f, 25.f, -20.f, 0.);
+    float4 pointLight = (float4)(250.f, 250.f, 400.f, 0.);
 
     // find intersection with box
     float tNear, tFar;
@@ -142,7 +147,7 @@ __kernel void deviceRenderRayCast(
         vectorField.y = blend * -cos(90. * u) + sin(90. * v);
         vectorField.z = 0.f;
 
-        pos += vectorField;
+        //pos += vectorField;
 
 
         float4 ijkPos;
@@ -178,26 +183,28 @@ __kernel void deviceRenderRayCast(
         float4 normal = normalize(gradient);
 
         // Phong lighting
+        // http://en.wikipedia.org/wiki/Phong_reflection_model
         float4 Cdiffuse = (float4)(1,1,0,0);
         float4 Cspecular = (float4)(1,1,1,0);
-        float Kdiffuse = .5;
-        float Kspecular = .1;
+        float Kdiffuse = 1;
+        float Kspecular = 1;
         float Shininess = 5;
 
         float4 V = normalize(eyeRayOrigin - pos);
         float4 L = normalize(pointLight - pos);
-        float4 R = 2.f*(dot(L,normal))*normal - L;
+        float4 R = normalize(2.f*(dot(L,normal))*normal - L);
         float4 phong = Kdiffuse * dot(L,normal) * Cdiffuse +
                        Kspecular * pow( dot(R,V), Shininess ) * Cspecular;
 
 
-      color = 100 * (phong);
-      color = 0.1f * (sample);
-      color = .1f * (sample + phong);
-      color.w = gradientMagnitude*.05;
-      color.w = 0.001;
-      color.w = sample.x/1.f;
-      color.w = sample.x/100000.f + gradientMagnitude*.5f;
+      //color = 0.1f * (sample);
+      //color = 0.1f * sample + phong;
+      color = 1 * (phong);
+
+      //color.w = gradientMagnitude*.05;
+      //color.w = 0.001;
+      //color.w = sample.x/1.f;
+      //color.w = sample.x/100000.f + gradientMagnitude*.5f;
       color.w = gradientMagnitude*.01f;
       //if (sample.x < 50.f) color.w = 0.f;
       color.w = clamp( color.w, 0.f, 1.f );
@@ -207,8 +214,6 @@ __kernel void deviceRenderRayCast(
         float4 newPixel = mix( integratedPixel, color, (float4)(a, a, a, a) );
         newPixel.w = integratedPixel.w + a;
         integratedPixel = newPixel;
-
-        //if (i == 50) integratedPixel = color;
 
         //tCurrent += rayStepSize;
         tCurrent += .15f;
@@ -223,6 +228,7 @@ __kernel void deviceRenderRayCast(
         }
 
     }
+
     //integratedPixel *= brightness;
 
     //integratedPixel *= .01f;
@@ -237,7 +243,7 @@ __kernel void deviceRenderRayCast(
         rgba.z = (uchar) 255. * clamp( integratedPixel.z, 0.0f, 1.0f );
         rgba.w = (uchar) 255. * clamp( integratedPixel.w, 0.0f, 1.0f );
 
-      rgba.w = (uchar) 255;
+        rgba.w = (uchar) 255;
         d_output[i] = rgba;
     }
 }
