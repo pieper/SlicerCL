@@ -54,6 +54,8 @@ class RenderCLWidget:
   def setup(self):
     # Instantiate and connect widgets ...
 
+    self.imageViewer = vtk.vtkImageViewer()
+
     #
     # Reload and Test area
     #
@@ -124,7 +126,7 @@ class RenderCLWidget:
       qt.QMessageBox.warning(slicer.util.mainWindow(),
           "Reload and Test", 'Exception!\n\n' + str(e) + "\n\nSee Python Console for Stack Trace")
 
-  def enter():
+  def enter(self):
     try:
       import pyopencl
     except ImportError:
@@ -135,18 +137,24 @@ class RenderCLWidget:
     if not volumeNode:
       qt.QMessageBox.warning(slicer.util.mainWindow(), "RenderCL", "No volume selected")
       return
-    self.logic = RenderCLLogic(volumeNode)
+    layoutManager = slicer.app.layoutManager()
+    threeDWidget = layoutManager.threeDWidget(0)
+    threeDView = threeDWidget.threeDView()
+    renderWindow = threeDView.renderWindow()
+    renderWindowSize = tuple(renderWindow.GetSize())
+    self.logic = RenderCLLogic(volumeNode, renderSize=renderWindowSize, imageViewer=self.imageViewer)
     self.logic.render()
 
 
 class RenderCLLogic(object):
-  def __init__(self,volumeNode,contextPreference='GPU',renderSize=(1024,1024)):
+  def __init__(self,volumeNode,contextPreference='GPU',renderSize=(1024,1024), imageViewer=None):
     """
     contextPreference is 'CPU' or 'GPU'
     """
     self.volumeNode = volumeNode
     self.volumeArray = slicer.util.array(self.volumeNode.GetID())
     self.renderSize = renderSize
+    self.imageViewer = imageViewer
 
     try:
       import pyopencl
@@ -158,29 +166,40 @@ class RenderCLLogic(object):
     import os
     os.environ['PYOPENCL_COMPILER_OUTPUT'] = '1'
 
+    #
+    # Find the context
+    #
     self.ctx = None
     for platform in pyopencl.get_platforms():
         for device in platform.get_devices():
             if pyopencl.device_type.to_string(device.type) == contextPreference:
                self.ctx = pyopencl.Context([device])
+               print ('Using context %s' % contextPreference)
                break;
 
     if not self.ctx:
       self.ctx = pyopencl.create_some_context()
     self.queue = pyopencl.CommandQueue(self.ctx)
 
+    #
+    # load the program in the device
+    #
     inPath = os.path.dirname(slicer.modules.rendercl.path) + "/Render.cl.in"
     fp = open(inPath)
     sourceIn = fp.read()
     fp.close()
 
     source = sourceIn % { # TODO: depend on image dimensions and spacing
-        'rayStepSize' : '0.1f',
-        'rayMaxSteps' : '500',
+        'rayStepSize' : '2.f',
+        'rayMaxSteps' : '5000',
         }
     self.prg = pyopencl.Program(self.ctx, source).build()
 
+    #
     # pass currently selected volume to device
+    # - it goes in as an RGBA image even though it's a slicer scalar volume
+    # - TODO: make this a one component image of the native type
+    #
     num_channels = 4
     shape = self.volumeArray.shape
     a = numpy.zeros(shape + (num_channels,)).astype(numpy.float32)
@@ -197,7 +216,9 @@ class RenderCLLogic(object):
 
     self.volumeImage_dev = pyopencl.image_from_array(self.ctx, a, num_channels)
 
+    #
     # create a 2d array for the render buffer
+    #
     self.renderArray = numpy.zeros(self.renderSize+(4,) ,dtype=numpy.dtype('ubyte'))
     self.renderArray_dev = pyopencl.array.to_device(self.queue, self.renderArray)
 
@@ -207,8 +228,10 @@ class RenderCLLogic(object):
                               pyopencl.addressing_mode.NONE,
                               pyopencl.filter_mode.LINEAR)
 
+    #
     # TODO make better 2D image of transfer function
     # for now grayscale and opacity mapped linearly from 0 to 100 (for MRHead)
+    #
     num_channels = 4
     mapping = numpy.linspace(0,1,100).astype(numpy.dtype('float32'))
     transfer = numpy.transpose([mapping,]*num_channels).copy()
@@ -225,13 +248,12 @@ class RenderCLLogic(object):
     if self.debugRendering:
       self.renderedImage = vtk.vtkImageData()
       self.renderedImage.SetDimensions(self.renderSize[0], self.renderSize[1], 1)
-      self.renderedImage.SetNumberOfScalarComponents(4)
-      self.renderedImage.SetScalarTypeToUnsignedChar()
-      self.renderedImage.AllocateScalars()
-      #self.imageViewer = vtk.vtkImageViewer()
-      #self.imageViewer.SetColorWindow(255)
-      #self.imageViewer.SetColorLevel(128)
-      #self.imageViewer.SetInput(self.renderedImage)
+      self.renderedImage.AllocateScalars(vtk.VTK_UNSIGNED_CHAR, 4)
+      if not self.imageViewer:
+        self.imageViewer = vtk.vtkImageViewer()
+      self.imageViewer.SetColorWindow(255)
+      self.imageViewer.SetColorLevel(128)
+      self.imageViewer.SetInputData(self.renderedImage)
 
 
   def render(self):
@@ -303,7 +325,7 @@ class RenderCLLogic(object):
         numpy.float32(0.0), # transferOffset
         numpy.float32(1.0), # transferScale
         self.viewMatrix_dev.data,
-        numpy.float32(viewAngle),
+        numpy.sin(numpy.deg2rad(numpy.float32(viewAngle))),
         self.volumeImage_dev,
         self.rasToIJK_dev.data,
         self.transferFunctionImage_dev,
@@ -315,26 +337,21 @@ class RenderCLLogic(object):
     renderedImage = self.renderArray_dev.get()
 
     if self.debugRendering:
-      print(renderedImage.shape)
-      print(renderedImage.min(), renderedImage.max())
 
       shape = list(self.renderedImage.GetDimensions())
       if shape[-1] == 1:
         shape = shape[:-1]
-      shape.reverse()
       components = self.renderedImage.GetNumberOfScalarComponents()
       if components > 1:
         shape.append(components)
       array = vtk.util.numpy_support.vtk_to_numpy(self.renderedImage.GetPointData().GetScalars()).reshape(shape)
       array[:] = renderedImage
       self.renderedImage.Modified()
-      #self.imageViewer.Render()
+      self.imageViewer.Render()
       pngWriter = vtk.vtkPNGWriter()
       pngWriter.SetFileName("/Users/pieper/Pictures/renderCLTests/render.png")
-      pngWriter.SetInput(self.renderedImage)
+      pngWriter.SetInputData(self.renderedImage)
       pngWriter.Write()
-
-      print(self.renderedImage.GetScalarRange())
 
 
 class RenderCLTest(unittest.TestCase):

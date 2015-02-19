@@ -65,7 +65,7 @@ __kernel void deviceRenderRayCast(
          float density, float brightness,
          float transferOffset, float transferScale,
          __constant float* viewMatrix,
-         float viewAngle,
+         float sinViewAngle,
          __read_only image3d_t volume,
          __constant float* rasToIJK,
          __read_only image2d_t transferFunc,
@@ -75,8 +75,9 @@ __kernel void deviceRenderRayCast(
     uint x = get_global_id(0);
     uint y = get_global_id(1);
 
-    float u = (x / (float) imageW) * 2.0f - 1.0f;
-    float v = (y / (float) imageH) * 2.0f - 1.0f;
+    float aspect = imageW / (1.0 * imageH);
+    float u = sinViewAngle/2. * aspect * ((x / (float) imageW) * 2.0f - 1.0f);
+    float v = sinViewAngle/2. * ((y / (float) imageH) * 2.0f - 1.0f);
 
     // vectors to map RAS to ijk
     float4 rasToI =  (float4)( rasToIJK[0], rasToIJK[1], rasToIJK[2], rasToIJK[3] );
@@ -95,8 +96,8 @@ __kernel void deviceRenderRayCast(
     float4 boxMax = (float4)( w,  h,  d, 1.0f);
 
     // TODO: hard coded!
-    float4 rasBoxMin = (float4)(-90.f, -113.f, -100.f, 1.f);
-    float4 rasBoxMax = (float4)(90.f, 113.f, 100.f, 1.f);
+    float4 rasBoxMin = (float4)(-90.f, -122.f, -140.f, 1.f);
+    float4 rasBoxMax = (float4)(90.f, 134.f, 120.f, 1.f);
 
 
     // calculate eye ray in world space
@@ -161,6 +162,10 @@ __kernel void deviceRenderRayCast(
         // read from 3D texture
         sample = read_imagef(volume, volumeSampler, ijkPos);
 
+        if (sample.x < 0) {
+          //continue;
+        }
+
         // lookup in transfer function texture
         //float2 transfer_pos = (float2)( (sample.x - transferOffset) * transferScale, 0.5f );
         //color = read_imagef( transferFunc, transferFuncSampler, transfer_pos );
@@ -199,13 +204,16 @@ __kernel void deviceRenderRayCast(
 
       //color = 0.1f * (sample);
       //color = 0.1f * sample + phong;
-      color = 1 * (phong);
+      color = phong;
 
       //color.w = gradientMagnitude*.05;
       //color.w = 0.001;
       //color.w = sample.x/1.f;
       //color.w = sample.x/100000.f + gradientMagnitude*.5f;
-      color.w = gradientMagnitude*.01f;
+      
+      color.w = sample.x/100. * gradientMagnitude * rayStepSize*.01f;
+      color.w = sample.x/10. * gradientMagnitude * rayStepSize*.01f;
+
       //if (sample.x < 50.f) color.w = 0.f;
       color.w = clamp( color.w, 0.f, 1.f );
 
@@ -215,8 +223,7 @@ __kernel void deviceRenderRayCast(
         newPixel.w = integratedPixel.w + a;
         integratedPixel = newPixel;
 
-        //tCurrent += rayStepSize;
-        tCurrent += .15f;
+        tCurrent += rayStepSize;
         if (tCurrent >= tFar - gradientSize) {
           // stepped out of the volume, so no further contributions
           break;
