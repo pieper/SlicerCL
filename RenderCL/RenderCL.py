@@ -2,6 +2,14 @@ import os
 import unittest
 from __main__ import vtk, qt, ctk, slicer
 
+try:
+  import pyopencl
+  import pyopencl.array
+  import numpy
+except ImportError:
+  raise "No OpenCL for you!\nInstall pyopencl in slicer's python installation."
+import vtk.util.numpy_support
+
 #
 # RenderCL
 #
@@ -50,6 +58,8 @@ class RenderCLWidget:
     if not parent:
       self.setup()
       self.parent.show()
+
+    self.logic = None
 
   def setup(self):
     # Instantiate and connect widgets ...
@@ -142,26 +152,22 @@ class RenderCLWidget:
     threeDView = threeDWidget.threeDView()
     renderWindow = threeDView.renderWindow()
     renderWindowSize = tuple(renderWindow.GetSize())
-    self.logic = RenderCLLogic(volumeNode, renderSize=renderWindowSize, imageViewer=self.imageViewer)
+
+    if not self.logic:
+      self.logic = RenderCLLogic(volumeNode, renderSize=renderWindowSize, imageViewer=self.imageViewer)
+
     self.logic.render()
 
 
-class RenderCLLogic(object):
-  def __init__(self,volumeNode,contextPreference='GPU',renderSize=(1024,1024), imageViewer=None):
-    """
-    contextPreference is 'CPU' or 'GPU'
-    """
-    self.volumeNode = volumeNode
-    self.volumeArray = slicer.util.array(self.volumeNode.GetID())
-    self.renderSize = renderSize
-    self.imageViewer = imageViewer
+class CLContext(object):
+  """An opencl context on a device.
+  Interacts with pyopencl, but doesn't know about mrml.
+  """
 
-    try:
-      import pyopencl
-      import pyopencl.array
-      import numpy
-    except ImportError:
-      raise "No OpenCL for you!\nInstall pyopencl in slicer's python installation."
+  def __init__(self,devicePreference='GPU'):
+    """
+    devicePreference is 'CPU' or 'GPU'
+    """
 
     import os
     os.environ['PYOPENCL_COMPILER_OUTPUT'] = '1'
@@ -169,60 +175,118 @@ class RenderCLLogic(object):
     #
     # Find the context
     #
-    self.ctx = None
+    self.context = None
     for platform in pyopencl.get_platforms():
         for device in platform.get_devices():
-            if pyopencl.device_type.to_string(device.type) == contextPreference:
-               self.ctx = pyopencl.Context([device])
-               print ('Using context %s' % contextPreference)
+            if pyopencl.device_type.to_string(device.type) == devicePreference:
+               self.context = pyopencl.Context([device])
+               print ('Using context %s' % devicePreference)
                break;
 
-    if not self.ctx:
-      self.ctx = pyopencl.create_some_context()
-    self.queue = pyopencl.CommandQueue(self.ctx)
+    if not self.context:
+      self.context = pyopencl.create_some_context()
 
-    #
-    # load the program in the device
-    #
-    inPath = os.path.dirname(slicer.modules.rendercl.path) + "/Render.cl.in"
-    fp = open(inPath)
+    if not self.context:
+      raise "No OpenCL context available!"
+
+    self.queue = pyopencl.CommandQueue(self.context)
+
+  def compile(self,programPath,mapping=None):
+    """Takes the path to an opencl program and compiles it for the context.
+    If a mapping is provided, it should be a dictionary of string to string
+    mappings to be applied to the program text before compiling.
+    """
+    if not self.context:
+      return None
+
+    fp = open(programPath)
     sourceIn = fp.read()
     fp.close()
 
-    source = sourceIn % { # TODO: depend on image dimensions and spacing
-        'rayStepSize' : '2.f',
-        'rayMaxSteps' : '5000',
-        }
-    self.prg = pyopencl.Program(self.ctx, source).build()
+    if mapping:
+      source = sourceIn % mapping
+    return pyopencl.Program(self.context, source).build()
 
-    #
-    # pass currently selected volume to device
-    # - it goes in as an RGBA image even though it's a slicer scalar volume
-    # - TODO: make this a one component image of the native type
-    #
+
+class CLVolume(object):
+  """Manage memory for a mrml volume node and all related attributes
+  such as the transform and volume rendering properties"""
+
+  def __init__(self,clContext,volumeNode):
+    self.clContext = clContext
+    self.volumeNode = volumeNode
+    self.volumeImage_dev = None
+    self.updateDevice()
+
+  def updateDevice(self):
+    """Pass currently selected volume to device.
+    It goes in as an RGBA image even though it's a slicer scalar volume
+    TODO: make this a one component image of the native type
+    """
+    volumeArray = slicer.util.array(self.volumeNode.GetID())
     num_channels = 4
-    shape = self.volumeArray.shape
+    shape = volumeArray.shape
     a = numpy.zeros(shape + (num_channels,)).astype(numpy.float32)
 
     #print(a)
     print(a.shape)
-    a[:,:,:,0] = self.volumeArray * .1
-    a[:,:,:,1] = self.volumeArray * .1
-    #a[:,:,:,2] = numpy.ones_like(self.volumeArray) * 128
-    a[:,:,:,3] = numpy.ones_like(self.volumeArray) * 255
+    a[:,:,:,0] = volumeArray * .1
+    a[:,:,:,1] = volumeArray * .1
+    #a[:,:,:,2] = numpy.ones_like(volumeArray) * 128
+    a[:,:,:,3] = numpy.ones_like(volumeArray) * 255
     #print(a)
     print(a.shape)
     print(a.max())
 
-    self.volumeImage_dev = pyopencl.image_from_array(self.ctx, a, num_channels)
+    self.volumeImage_dev = pyopencl.image_from_array(self.clContext.context, a, num_channels)
+
+    rasToIJK = vtk.vtkMatrix4x4()
+    self.volumeNode.GetRASToIJKMatrix(rasToIJK)
+
+    transformNode = self.volumeNode.GetParentTransformNode()
+    if transformNode:
+      if transformNode.IsTransformToWorldLinear():
+        rasToRAS = vtk.vtkMatrix4x4()
+        transformNode.GetMatrixTransformToWorld(rasToRAS)
+        rasToRAS.Invert()
+        rasToRAS.Multiply4x4(rasToIJK, rasToRAS, rasToIJK)
+
+    rasToIJKArray = numpy.eye(4,dtype=numpy.dtype('float32'))
+    for row in range(4):
+      for col in range(4):
+        rasToIJKArray[row,col] = rasToIJK.GetElement(row,col)
+
+    self.rasToIJK_dev = pyopencl.array.to_device(self.clContext.queue, rasToIJKArray)
+
+class RenderCLLogic(object):
+
+  def __init__(self,volumeNode,devicePreference='GPU',renderSize=(1024,1024), imageViewer=None):
+    """
+    devicePreference is 'CPU' or 'GPU'
+    """
+    self.volumeNode = volumeNode
+    self.volumeArray = slicer.util.array(self.volumeNode.GetID())
+    self.renderSize = renderSize
+    self.imageViewer = imageViewer
+
+    self.clContext = CLContext(devicePreference)
+    self.clVolume = CLVolume(self.clContext, volumeNode)
+
+    inPath = os.path.dirname(slicer.modules.rendercl.path) + "/Render.cl.in"
+    mapping = { # TODO: depend on image dimensions and spacing
+      'rayStepSize' : '2.f',
+      'rayMaxSteps' : '5000',
+    }
+
+    self.renderProgram = self.clContext.compile(inPath, mapping)
 
     #
     # create a 2d array for the render buffer
     #
     self.renderArray = numpy.zeros(self.renderSize+(4,) ,dtype=numpy.dtype('ubyte'))
-    self.renderArray_dev = pyopencl.array.to_device(self.queue, self.renderArray)
+    self.renderArray_dev = pyopencl.array.to_device(self.clContext.queue, self.renderArray)
 
-    self.volumeSampler = pyopencl.Sampler(self.ctx,
+    self.volumeSampler = pyopencl.Sampler(self.clContext.context,
                               # normalized_coords, addressing_mode, filter_mode
                               False,
                               pyopencl.addressing_mode.NONE,
@@ -235,10 +299,10 @@ class RenderCLLogic(object):
     num_channels = 4
     mapping = numpy.linspace(0,1,100).astype(numpy.dtype('float32'))
     transfer = numpy.transpose([mapping,]*num_channels).copy()
-    self.transferFunctionImage_dev = pyopencl.image_from_array(self.ctx, transfer, num_channels)
+    self.transferFunctionImage_dev = pyopencl.image_from_array(self.clContext.context, transfer, num_channels)
 
 
-    self.transferFunctionSampler = pyopencl.Sampler(self.ctx,
+    self.transferFunctionSampler = pyopencl.Sampler(self.clContext.context,
                               # normalized_coords, addressing_mode, filter_mode
                               False,
                               pyopencl.addressing_mode.NONE,
@@ -257,14 +321,6 @@ class RenderCLLogic(object):
 
 
   def render(self):
-    try:
-      import pyopencl
-      import pyopencl.array
-      import numpy
-      import vtk.util.numpy_support
-    except ImportError:
-      raise "No OpenCL for you!\nInstall pyopencl in slicer's python installation."
-    print("Building program...")
 
     # get the camera parameters from default 3D window
     layoutManager = slicer.app.layoutManager()
@@ -296,28 +352,9 @@ class RenderCLLogic(object):
     viewMatrix[2] = viewUp
     viewMatrix[3] = viewPosition
 
-    self.viewMatrix_dev = pyopencl.array.to_device(self.queue, viewMatrix)
+    self.viewMatrix_dev = pyopencl.array.to_device(self.clContext.queue, viewMatrix)
 
-    rasToIJK = vtk.vtkMatrix4x4()
-    self.volumeNode.GetRASToIJKMatrix(rasToIJK)
-    
-    transformNode = self.volumeNode.GetParentTransformNode()
-    if transformNode:
-      if transformNode.IsTransformToWorldLinear():
-        rasToRAS = vtk.vtkMatrix4x4()
-        transformNode.GetMatrixTransformToWorld(rasToRAS)
-        rasToRAS.Invert()
-        rasToRAS.Multiply4x4(rasToIJK, rasToRAS, rasToIJK)
-
-    rasToIJKArray = numpy.eye(4,dtype=numpy.dtype('float32'))
-    for row in range(4):
-      for col in range(4):
-        rasToIJKArray[row,col] = rasToIJK.GetElement(row,col)
-
-    self.rasToIJK_dev = pyopencl.array.to_device(self.queue, rasToIJKArray)
-
-
-    self.prg.deviceRenderRayCast(self.queue, self.renderSize, None,
+    self.renderProgram.deviceRenderRayCast(self.clContext.queue, self.renderSize, None,
         self.renderArray_dev.data,
         numpy.uint32(self.renderSize[0]), numpy.uint32(self.renderSize[1]),
         numpy.float32(1.0), # density
@@ -326,8 +363,8 @@ class RenderCLLogic(object):
         numpy.float32(1.0), # transferScale
         self.viewMatrix_dev.data,
         numpy.sin(numpy.deg2rad(numpy.float32(viewAngle))),
-        self.volumeImage_dev,
-        self.rasToIJK_dev.data,
+        self.clVolume.volumeImage_dev,
+        self.clVolume.rasToIJK_dev.data,
         self.transferFunctionImage_dev,
         self.volumeSampler,
         self.transferFunctionSampler)
@@ -352,6 +389,7 @@ class RenderCLLogic(object):
       pngWriter.SetFileName("/Users/pieper/Pictures/renderCLTests/render.png")
       pngWriter.SetInputData(self.renderedImage)
       pngWriter.Write()
+
 
 
 class RenderCLTest(unittest.TestCase):

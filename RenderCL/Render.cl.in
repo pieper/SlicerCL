@@ -212,7 +212,7 @@ __kernel void deviceRenderRayCast(
       //color.w = sample.x/100000.f + gradientMagnitude*.5f;
       
       color.w = sample.x/100. * gradientMagnitude * rayStepSize*.01f;
-      color.w = sample.x/10. * gradientMagnitude * rayStepSize*.01f;
+      color.w = sample.x/.1 * gradientMagnitude/100. * rayStepSize*.01f;
 
       //if (sample.x < 50.f) color.w = 0.f;
       color.w = clamp( color.w, 0.f, 1.f );
