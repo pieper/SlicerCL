@@ -60,6 +60,7 @@ class RenderCLWidget:
       self.parent.show()
 
     self.logic = None
+    self.observerTagMap = {}
 
   def setup(self):
     # Instantiate and connect widgets ...
@@ -118,10 +119,16 @@ class RenderCLWidget:
     # Add vertical spacer
     self.layout.addStretch(1)
 
+  def cleanup(self):
+    for obj in self.observerTagMap.keys():
+      obj.RemoveObserver(self.observerTagMap[obj])
+
+
   def onReload(self,moduleName="RenderCL"):
     """Generic reload method for any scripted module.
     ModuleWizard will subsitute correct default moduleName.
     """
+    self.cleanup()
     globals()[moduleName] = slicer.util.reloadScriptedModule(moduleName)
 
   def onReloadAndTest(self,moduleName="RenderCL"):
@@ -153,9 +160,15 @@ class RenderCLWidget:
     renderWindow = threeDView.renderWindow()
     renderWindowSize = tuple(renderWindow.GetSize())
 
-    if not self.logic:
+    if not self.logic or self.logic.volumeNode != volumeNode:
       self.logic = RenderCLLogic(volumeNode, renderSize=renderWindowSize, imageViewer=self.imageViewer)
 
+    self.logic.render()
+
+    if not renderWindow in self.observerTagMap.keys():
+      self.observerTagMap[renderWindow] = renderWindow.AddObserver(vtk.vtkCommand.EndEvent, self.renderCallback)
+
+  def renderCallback(self,event,caller):
     self.logic.render()
 
 
