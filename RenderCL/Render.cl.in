@@ -68,6 +68,7 @@ __kernel void deviceRenderRayCast(
          float sinViewAngle,
          __read_only image3d_t volume,
          __constant float* rasToIJK,
+         __constant float* rasBounds,
          __read_only image2d_t transferFunc,
          sampler_t volumeSampler,
          sampler_t transferFuncSampler )
@@ -84,21 +85,9 @@ __kernel void deviceRenderRayCast(
     float4 rasToJ =  (float4)( rasToIJK[4], rasToIJK[5], rasToIJK[6], rasToIJK[7] );
     float4 rasToK =  (float4)( rasToIJK[8], rasToIJK[9], rasToIJK[10], rasToIJK[11] );
 
-    // TODO: these should be the extents of the RAS box of the volume
-    // Note they must be axis aligned so that should be fixed
-    // For now use normalized access mode in sampler - TODO switch to actual IJK
-    //float4 boxMin = (float4)( -1.0f, -1.0f, -1.0f, 1.0f);
-    //float4 boxMax = (float4)(  1.0f,  1.0f,  1.0f, 1.0f);
-    float4 boxMin = (float4)( .0f, .0f, .0f, 1.0f);
-    float w = get_image_width(volume);
-    float h = get_image_height(volume);
-    float d = get_image_depth(volume);
-    float4 boxMax = (float4)( w,  h,  d, 1.0f);
-
-    // TODO: hard coded!
-    float4 rasBoxMin = (float4)(-90.f, -122.f, -140.f, 1.f);
-    float4 rasBoxMax = (float4)(90.f, 134.f, 120.f, 1.f);
-
+    // corners of the box
+    float4 rasBoxMin = (float4)(rasBounds[0], rasBounds[2], rasBounds[4], 1.f);
+    float4 rasBoxMax = (float4)(rasBounds[1], rasBounds[3], rasBounds[5], 1.f);
 
     // calculate eye ray in world space
     float4 eyeRayOrigin;

@@ -258,6 +258,10 @@ class CLVolume(object):
 
     self.rasToIJK_dev = pyopencl.array.to_device(self.clContext.queue, rasToIJKArray)
 
+    rasBounds = numpy.zeros(6,dtype=numpy.dtype('float32'))
+    self.volumeNode.GetRASBounds(rasBounds)
+    self.rasBounds_dev = pyopencl.array.to_device(self.clContext.queue, rasBounds)
+
 class RenderCLLogic(object):
 
   def __init__(self,volumeNode,devicePreference='GPU',renderSize=(1024,1024), imageViewer=None):
@@ -365,6 +369,7 @@ class RenderCLLogic(object):
         numpy.sin(numpy.deg2rad(numpy.float32(viewAngle))),
         self.clVolume.volumeImage_dev,
         self.clVolume.rasToIJK_dev.data,
+        self.clVolume.rasBounds_dev.data,
         self.transferFunctionImage_dev,
         self.volumeSampler,
         self.transferFunctionSampler)
@@ -374,7 +379,6 @@ class RenderCLLogic(object):
     renderedImage = self.renderArray_dev.get()
 
     if self.debugRendering:
-
       shape = list(self.renderedImage.GetDimensions())
       if shape[-1] == 1:
         shape = shape[:-1]
