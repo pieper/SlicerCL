@@ -158,10 +158,10 @@ class RenderCLWidget:
     threeDWidget = layoutManager.threeDWidget(0)
     threeDView = threeDWidget.threeDView()
     renderWindow = threeDView.renderWindow()
-    renderWindowSize = tuple(renderWindow.GetSize())
+    self.renderWindowSize = tuple(renderWindow.GetSize())
 
     if not self.logic or self.logic.volumeNode != volumeNode:
-      self.logic = RenderCLLogic(volumeNode, renderSize=renderWindowSize, imageViewer=self.imageViewer)
+      self.logic = RenderCLLogic(volumeNode, renderSize=self.renderWindowSize, imageViewer=self.imageViewer)
 
     self.logic.render()
 
@@ -169,6 +169,24 @@ class RenderCLWidget:
       self.observerTagMap[renderWindow] = renderWindow.AddObserver(vtk.vtkCommand.EndEvent, self.renderCallback)
 
   def renderCallback(self,event,caller):
+    volumeNode = self.volumeSelector.currentNode()
+    needsNewLogic = False
+    if not self.logic:
+      needsNewLogic = True
+    else:
+      if not self.logic.volumeNode or self.logic.volumeNode != volumeNode:
+        needsNewLogic = True
+      else:
+        if not self.logic.volumeNode.GetImageData():
+          needsNewLogic = True
+        else:
+          if not volumeNode.GetImageData():
+            needsNewLogic = False
+          else:
+            if volumeNode.GetImageData().GetMTime() > self.logic.volumeNode.GetMTime():
+              needsNewLogic = True
+    if needsNewLogic:
+      self.logic = RenderCLLogic(volumeNode, renderSize=self.renderWindowSize, imageViewer=self.imageViewer)
     self.logic.render()
 
 

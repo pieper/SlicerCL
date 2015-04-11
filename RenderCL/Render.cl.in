@@ -132,12 +132,12 @@ __kernel void deviceRenderRayCast(
 
         // add a vector field proportional to i, u, v 
         float4 vectorField;
-        float blend = i * 10.f / rayMaxSteps;
+        float blend = i * 1000.f / rayMaxSteps;
         vectorField.x = blend * sin(90. * u) + cos(90. * v);
         vectorField.y = blend * -cos(90. * u) + sin(90. * v);
         vectorField.z = 0.f;
 
-        //pos += vectorField;
+        pos += vectorField;
 
 
         float4 ijkPos;
